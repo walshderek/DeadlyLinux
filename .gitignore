@@ -1,0 +1,50 @@
+# Environments
+.venv/
+venv/
+.env
+.env.*
+*.env
+.envrc
+.conda/
+conda-meta/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Packaging/Build
+*.egg-info/
+*.dist-info/
+build/
+dist/
+
+# Logs and editor files
+*.log
+*.swp
+*.swo
+.DS_Store
+.vscode/
+.idea/
+
+# Outputs, datasets, caches (do not commit runtime/generated data)
+**/outputs/
+**/output/
+**/output_*/
+**/datasets/
+**/dataset/
+**/dataset_*/
+**/Database/
+**/downloads/
+**/old/
+**/cache/
+**/.cache/
+**/cache_*/
+**/tmp/
+**/temp/
+
+# Comfy / local artifacts
+comfy.log
+secure_and_verify.log

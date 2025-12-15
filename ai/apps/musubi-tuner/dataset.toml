@@ -1,0 +1,11 @@
+[general]
+resolution = [256, 256]
+enable_bucket = true
+
+[[datasets]]
+batch_size = 1
+resolution = [256, 256]
+enable_bucket = true
+image_directory = "/mnt/c/AI/apps/musubi-tuner/files/datasets/Ed Milliband"
+caption_extension = ".txt"
+num_repeats = 1

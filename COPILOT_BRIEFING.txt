@@ -325,23 +325,6 @@ The user confirmed that Windows-based tools (specifically GitHub Desktop) now re
 > "This directory does not appear to be a Git repository."
 
 #### B. THE IMPLICATION
-This confirms that the  directory is fully removed/inaccessible on the Windows side (). The repository metadata now exists **exclusively** within the WSL Linux filesystem ().
-
-#### C. INSTRUCTION TO COPILOT
-1.  **Do Not Initialize:** Under NO circumstances should you suggest running  or "Add Repository" on the Windows side to "fix" this error.
-2.  **Ignore Windows Git Status:** Treat the Windows directory as a raw file container only. The "missing" Git repository on Windows is the **correct, safe state**.
-3.  **Verification:** The only valid place to check  is inside the WSL terminal at .
-
-End of Section XV.
-
-
-### XV. CRITICAL STATE: WINDOWS GIT BLINDNESS (DO NOT REPAIR)
-
-#### A. THE OBSERVATION
-The user confirmed that Windows-based tools (specifically GitHub Desktop) now report the following error for the original Windows path:
-> "This directory does not appear to be a Git repository."
-
-#### B. THE IMPLICATION
 This confirms that the .git directory is fully removed/inaccessible on the Windows side (/mnt/c/...). The repository metadata now exists **exclusively** within the WSL Linux filesystem (/home/seanf/deadlygraphics/.git).
 
 #### C. INSTRUCTION TO COPILOT

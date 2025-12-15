@@ -333,3 +333,19 @@ This confirms that the .git directory is fully removed/inaccessible on the Windo
 3.  **Verification:** The only valid place to check git status is inside the WSL terminal at /home/seanf/deadlygraphics.
 
 End of Section XV.
+
+### XVI. APPLICATION STRATEGY AND VERIFICATION PROTOCOL
+
+#### A. APP MANAGEMENT (HYBRID APPROACH)
+1. **Upstream Source:** Apps aside from DG_ apps must remain linked/pullable from the official  repository to receive core updates.
+2. **Path Configuration:** CRITICAL. We must implement  to override default model locations. It must point to the central Windows model store at  (mapped to , , , etc.).
+3. **Templates:** Implement custom "DeadlyGraphics" templates for generation and training workflows to ensure consistency. We will begin building these templates and then push.
+
+#### B. THE STANDARD OF OBSERVATION (SUCCESS CRITERIA)
+To determine if the system is functional, Copilot must perform this specific 3-step sequence:
+1. **Sync Check:** Verify  repo in WSL is synced with GitHub .
+2. **Live Test:** Execute  targeting "Barack Obama" (Step 1 scrape).
+3. **Observation:** Manually verify that files are generated in the specific output directory (). Success is defined by the presence of valid files, not just console output.
+
+End of Section XVI.
+

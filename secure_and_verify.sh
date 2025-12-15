@@ -60,7 +60,10 @@ for app in "${apps[@]}"; do
     if [ -f "$appdir/requirements.txt" ]; then
       echo "Found requirements.txt, applying Diamond Filter"
       grep -Ev '^(\s*#|\s*$|torch|tensorflow|nvidia|cuda)' "$appdir/requirements.txt" > "/tmp/req_$app.txt" || true
-      "$PIP" install --no-deps -r "/tmp/req_$app.txt" || echo "Warning: install issues for $app"
+      echo "Installing (with cache check at /mnt/c/linuxdownloads)..."
+      "$PIP" install --find-links /mnt/c/linuxdownloads --no-deps -r "/tmp/req_$app.txt" || echo "Warning: install issues for $app"
+      # Save to cache
+      "$PIP" download --dest /mnt/c/linuxdownloads -r "/tmp/req_$app.txt" || true
     else
       echo "No requirements.txt found for $app; attempting editable install if pyproject or setup exists"
       if [ -f "$appdir/pyproject.toml" ] || [ -f "$appdir/setup.py" ]; then

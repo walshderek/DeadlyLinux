@@ -7,6 +7,15 @@ PIP="$HOME/mambaforge/envs/deadlygraphics/bin/pip"
 WORKDIR="$HOME/deadlygraphics/ai"
 LOG_DIR="$HOME/deadlygraphics/deployment_logs"
 
+# PARSE ARGS
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --path) WORKDIR="$2"; shift 2 ;;
+    --apps) WORKDIR="$HOME/deadlygraphics/ai/apps"; shift ;;
+    *) echo "Unknown: $1"; exit 1 ;;
+  esac
+done
+
 mkdir -p "$LOG_DIR"
 STATUS="$LOG_DIR/deployment_status.md"
 CONFLICTS="$LOG_DIR/deployment_conflicts.log"
@@ -17,6 +26,7 @@ CONFLICTS="$LOG_DIR/deployment_conflicts.log"
 
 echo "# Deployment Status Report" > "$STATUS"
 echo "Generated on $(date)" >> "$STATUS"
+echo "Audit path: $WORKDIR" >> "$STATUS"
 
 # 1. CHECK ENGINE (TORCH/TF)
 echo "## 1. Engine Room Check" | tee -a "$STATUS"
@@ -32,50 +42,47 @@ fi
 
 # 2. AUDIT REPOS
 echo -e "\n## 2. Repo Audit" | tee -a "$STATUS"
-repos=("ai-toolkit" "musubi-tuner" "OneTrainer" "ComfyUI")
 
-for r in "${repos[@]}"; do
-    repo_path="$WORKDIR/$r"
-    echo -e "\n### Repo: $r" >> "$STATUS"
+for p in "$WORKDIR"/*; do
+    [ -d "$p" ] || continue
+    name=$(basename "$p")
+    echo -e "\n### Repo: $name" >> "$STATUS"
     
-    if [ -d "$repo_path" ]; then
-        echo "- **Status**: FOUND at $repo_path" >> "$STATUS"
+    # REQUIREMENTS INSTALL (FILTERED)
+    if [ -f "$p/requirements.txt" ]; then
+        echo "- requirements.txt: FOUND" >> "$STATUS"
+        tmp_req="/tmp/filtered_${name}_requirements.txt"
         
-        # REQUIREMENTS INSTALL (FILTERED)
-        if [ -f "$repo_path/requirements.txt" ]; then
-            echo "- requirements.txt: FOUND" >> "$STATUS"
-            tmp_req="/tmp/filtered_${r}_requirements.txt"
-            
-            # THE DIAMOND FILTER: Removes torch, tf, nvidia, etc. to prevent downgrades
-            grep -Ev "^(\s*#|\s*$|torch|tensorflow|triton|torchvision|torchaudio|xformers|sage-attention|nvidia-|cuda|cupy)" "$repo_path/requirements.txt" > "$tmp_req" || true
+        # THE DIAMOND FILTER: Removes torch, tf, nvidia, etc. to prevent downgrades
+        grep -Ev "^(\s*#|\s*$|torch|tensorflow|triton|torchvision|torchaudio|xformers|sage-attention|nvidia-|cuda|cupy)" "$p/requirements.txt" > "$tmp_req" || true
             
             echo "- Installing filtered requirements..." >> "$STATUS"
             if "$PIP" install --no-deps -r "$tmp_req" >> "$repo_path/install.log" 2>&1; then
-                echo "- **Install**: SUCCESS (Filtered)" >> "$STATUS"
-            else
-                echo "- **Install**: FAILED (See $repo_path/install.log)" >> "$STATUS"
-                echo "FAILED: $r" >> "$CONFLICTS"
-            fi
+        echo "- **Install**: SUCCESS (Filtered)" >> "$STATUS"
         else
-            echo "- requirements.txt: MISSING" >> "$STATUS"
+            echo "- **Install**: FAILED (See $p/install.log)" >> "$STATUS"
+            echo "FAILED: $name" >> "$CONFLICTS"
         fi
+    else
+        echo "- requirements.txt: MISSING" >> "$STATUS"
+    fi
 
-        # ACCELERATION CHECK (Xformers/Sage)
-        echo "- **Acceleration Check**:" >> "$STATUS"
-        if "$PIP" show xformers > /dev/null 2>&1; then
-            echo "  - xformers: INSTALLED" >> "$STATUS"
-        else
-            echo "  - xformers: MISSING" >> "$STATUS"
-        fi
-        if "$PIP" show "sage-attention" > /dev/null 2>&1; then
-            echo "  - sage-attention: INSTALLED" >> "$STATUS"
-        else
-            echo "  - sage-attention: MISSING" >> "$STATUS"
-        fi
+    # ACCELERATION CHECK (Xformers/Sage)
+    echo "- **Acceleration Check**:" >> "$STATUS"
+    if "$PIP" show xformers > /dev/null 2>&1; then
+        echo "  - xformers: INSTALLED" >> "$STATUS"
+    else
+        echo "  - xformers: MISSING" >> "$STATUS"
+    fi
+    if "$PIP" show sage-attention > /dev/null 2>&1; then
+        echo "  - sage-attention: INSTALLED" >> "$STATUS"
+    else
+        echo "  - sage-attention: MISSING" >> "$STATUS"
+    fi
 
-        # Runtime import checks
-        echo "- **Runtime import checks**:" >> "$STATUS"
-        "$PY" - <<PY_EOF >> "$STATUS" 2>&1 || true
+    # Runtime import checks
+    echo "- **Runtime import checks**:" >> "$STATUS"
+    "$PY" - <<PY_EOF >> "$STATUS" 2>&1 || true
 import sys
 for mod,name in [("xformers","xformers"),("sage_attention","sage-attention"),("sage","sage-attention")]:
     try:
@@ -85,9 +92,6 @@ for mod,name in [("xformers","xformers"),("sage_attention","sage-attention"),("s
         print(name, 'import_fail', repr(e))
 PY_EOF
 
-    else
-        echo "- **Status**: MISSING (Folder not found)" >> "$STATUS"
-    fi
 done
 
 # Copy logs to repo root for Windows access if mount exists

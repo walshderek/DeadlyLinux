@@ -1,0 +1,32 @@
+# Python virtual environments
+.venv/
+.runtime-venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+
+# But keep requirements.txt
+!requirements.txt
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Model files (too large)
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+
+# Datasets (managed separately)
+datasets/

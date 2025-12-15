@@ -105,3 +105,23 @@ If the user reports a hang or failure, the first instruction MUST be:
 3. Check Windows Defender Status in a Windows shell: Get-MpPreference | Select-Object DisableRealtimeMonitoring
 
 The entire process is now finalized. The system is clean, synchronized, and documented.
+
+VIII. CANONICAL SCRIPTS (2025-12-15 CONSOLIDATION)
+
+Kept as primary:
+- install_deadlylinux.sh (bootstrap: mambaforge/env/requirements)
+- run_audit.sh (core audit)
+- run_audit_apps.sh (apps audit)
+- secure_and_verify.sh (filtered installs + docs + Obama test)
+- start_comfy_detach2.py (auto-path Comfy launcher)
+
+Removed as duplicates/older variants:
+- finalize_env.sh, install_reqs.sh, run_mamba_install.sh
+- verify_and_test.sh, wire_and_fire.sh
+- start_comfy_detach.py
+
+Canon flows:
+1) Bootstrap: install_deadlylinux.sh
+2) Audit: run_audit_apps.sh (or run_audit.sh)
+3) Verify: secure_and_verify.sh
+4) Launch: start_comfy_detach2.py

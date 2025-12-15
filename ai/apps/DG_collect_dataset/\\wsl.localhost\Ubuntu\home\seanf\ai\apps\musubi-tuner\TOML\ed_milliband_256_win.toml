@@ -1,0 +1,10 @@
+[general]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = false
+[[datasets]]
+image_directory = "\\wsl.localhost\Ubuntu\home\seanf\workspace\deadlygraphics\ai\apps\DG_collect_dataset\outputs\ed_milliband\05_publish\256"
+cache_directory = "\\wsl.localhost\Ubuntu\home\seanf\workspace\deadlygraphics\ai\apps\DG_collect_dataset\outputs\ed_milliband\05_publish\256_cache"
+num_repeats = 1
+resolution = [256,256]

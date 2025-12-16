@@ -48,3 +48,10 @@ dist/
 # Comfy / local artifacts
 comfy.log
 secure_and_verify.log
+
+# Python virtual environments
+ai/apps/DG_collect_dataset/.runtime-venv/
+ai/apps/DG_collect_dataset/.venv/
+*.venv/
+__pycache__/
+*.pyc

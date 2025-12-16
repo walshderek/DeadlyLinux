@@ -13,6 +13,7 @@ import utils
 # ================= CONFIGURATION =================
 TARGET_SIZE = 1024
 RESOLUTIONS = [512, 256]
+RESAMPLER = getattr(Image, "Resampling", Image).LANCZOS
 
 # --- DESTINATIONS ---
 DEST_APP_ROOT = Path("/mnt/c/AI/apps/musubi-tuner")
@@ -125,6 +126,69 @@ pause
 ENDLOCAL
 """
 
+
+def generate_sh(slug, toml_path_linux):
+        return f"""#!/usr/bin/env bash
+set -euo pipefail
+
+WAN_ROOT=\"{utils.MUSUBI_PATHS['wsl_app']}\"
+CFG=\"{toml_path_linux}\"
+
+OUT=\"${{WAN_ROOT}}/outputs/{slug}\"
+LOGDIR=\"${{WAN_ROOT}}/logs\"
+
+DIT_LOW=\"{PATH_DIT_LOW}\"
+DIT_HIGH=\"{PATH_DIT_HIGH}\"
+VAE=\"{PATH_VAE}\"
+T5=\"{PATH_T5}\"
+
+cd \"${{WAN_ROOT}}\"
+source venv/bin/activate
+
+mkdir -p \"${{OUT}}\" \"${{LOGDIR}}\"
+
+python wan_cache_latents.py --dataset_config \"${{CFG}}\" --vae \"${{VAE}}\" --vae_dtype float16
+
+python wan_cache_text_encoder_outputs.py --dataset_config \"${{CFG}}\" --t5 \"${{T5}}\" --batch_size 16 --fp8_t5
+
+accelerate launch --num_processes 1 \\
+    wan_train_network.py \\
+    --dataset_config \"${{CFG}}\" \\
+    --discrete_flow_shift 3 \\
+    --dit \"${{DIT_LOW}}\" \\
+    --dit_high_noise \"${{DIT_HIGH}}\" \\
+    --fp8_base \\
+    --fp8_scaled \\
+    --fp8_t5 \\
+    --gradient_accumulation_steps 1 \\
+    --gradient_checkpointing \\
+    --img_in_txt_in_offloading \\
+    --learning_rate 0.00001 \\
+    --logging_dir \"${{LOGDIR}}\" \\
+    --lr_scheduler cosine \\
+    --lr_warmup_steps 100 \\
+    --max_data_loader_n_workers 6 \\
+    --max_train_epochs 35 \\
+    --save_every_n_epochs 5 \\
+    --seed 42 \\
+    --t5 \"${{T5}}\" \\
+    --task t2v-A14B \\
+    --timestep_boundary 875 \\
+    --timestep_sampling logsnr \\
+    --vae \"${{VAE}}\" \\
+    --vae_cache_cpu \\
+    --vae_dtype float16 \\
+    --network_module networks.lora_wan \\
+    --network_dim 16 \\
+    --network_alpha 16 \\
+    --mixed_precision fp16 \\
+    --min_timestep 0 \\
+    --max_timestep 1000 \\
+    --offload_inactive_dit \\
+    --optimizer_type AdamW8bit \\
+    --sdpa
+"""
+
 def run(slug):
     print(f"=== PUBLISHING {slug} ===")
     config = utils.load_config(slug)
@@ -132,13 +196,26 @@ def run(slug):
     
     path = utils.get_project_path(slug)
     
-    # 1. Source Images
+    # --- PAPER TRAIL ARCHITECTURE (Section XIX) ---
+    # INPUT: 05_caption (images + .txt captions from captioning stage)
+    # Fallback chain: 05_caption -> 04_clean -> 03_validate
+    
+    caption_dir = path / utils.DIRS.get('caption', '05_caption')
     clean_dir = path / utils.DIRS.get('clean', '04_clean')
     validate_dir = path / utils.DIRS.get('validate', '03_validate')
-    in_dir = clean_dir if clean_dir.exists() else validate_dir
     
-    if not in_dir.exists():
-        print(f"❌ ERROR: No images found.")
+    # Try 05_caption first (Paper Trail standard)
+    if caption_dir.exists():
+        in_dir = caption_dir
+        print(f"📂 [06_publish] Using Paper Trail source: {in_dir}")
+    elif clean_dir.exists():
+        in_dir = clean_dir
+        print(f"⚠️  [06_publish] Fallback to 04_clean (no 05_caption): {in_dir}")
+    elif validate_dir.exists():
+        in_dir = validate_dir
+        print(f"⚠️  [06_publish] Fallback to 03_validate: {in_dir}")
+    else:
+        print(f"❌ ERROR: No images found in any stage folder.")
         return
 
     # 2. Local WSL Output
@@ -159,6 +236,8 @@ def run(slug):
     # 4. Generate Images & Copy
     res_dir_1024 = publish_root / "1024"
     res_dir_1024.mkdir(exist_ok=True)
+    res_dir_256 = publish_root / "256"
+    res_dir_256.mkdir(exist_ok=True)
     
     TARGET_RES = 256
     
@@ -170,14 +249,14 @@ def run(slug):
         
         for res in RESOLUTIONS:
             if res == 256:
-                try:
-                    res_dir = publish_root / str(res)
-                    res_dir.mkdir(exist_ok=True)
-                    img = Image.open(res_dir_1024 / f)
-                    img.resize((res, res), Image.Resampling.LANCZOS).save(dest_dataset_dir / f)
-                    if (in_dir / txt).exists():
-                        shutil.copy(in_dir / txt, dest_dataset_dir / txt)
-                except: pass
+                res_dir = publish_root / str(res)
+                res_dir.mkdir(exist_ok=True)
+                img = Image.open(res_dir_1024 / f)
+                img.resize((res, res), RESAMPLER).save(res_dir / f)
+                img.resize((res, res), RESAMPLER).save(dest_dataset_dir / f)
+                if (in_dir / txt).exists():
+                    shutil.copy(in_dir / txt, res_dir / txt)
+                    shutil.copy(in_dir / txt, dest_dataset_dir / txt)
 
     # 5. Generate Configs
     win_dataset_path = f"{WIN_DATASETS_ROOT_STR}/{slug}"
@@ -185,11 +264,13 @@ def run(slug):
     
     toml_name = f"{slug}_{res_str}_win.toml"
     bat_name = f"train_{slug}_{res_str}.bat"
+    sh_name = f"train_{slug}_{res_str}.sh"
     
     toml_content = generate_toml(win_dataset_path, TARGET_RES)
     bat_content = generate_bat(slug, f"{WIN_TOML_DIR_STR}\\{toml_name}")
+    sh_content = generate_sh(slug, f"{DEST_TOML_DIR / toml_name}")
 
-    # 6. Deploy
+    # 6. Deploy to Musubi app
     DEST_TOML_DIR.mkdir(parents=True, exist_ok=True)
     
     with open(DEST_TOML_DIR / toml_name, "w") as f: 
@@ -198,5 +279,29 @@ def run(slug):
     with open(DEST_APP_ROOT / bat_name, "w") as f: 
         f.write(bat_content)
 
+    with open(DEST_APP_ROOT / sh_name, "w") as f:
+        f.write(sh_content)
+    os.chmod(DEST_APP_ROOT / sh_name, 0o755)
+
+    # 7. Also drop copies in publish folder alongside trigger
+    with open(publish_root / toml_name, "w") as f:
+        f.write(toml_content)
+    with open(publish_root / bat_name, "w") as f:
+        f.write(bat_content)
+    with open(publish_root / sh_name, "w") as f:
+        f.write(sh_content)
+    os.chmod(publish_root / sh_name, 0o755)
+
+    # 8. Save trigger word in publish folder
+    trigger_txt = publish_root / "trigger.txt"
+    with open(trigger_txt, "w") as f:
+        f.write(str(config.get('trigger', '')).strip())
+
+    # 9. Log to Google Sheet (best-effort)
+    utils.log_trigger_to_sheet(
+        name=config.get('name', slug),
+        trigger=config.get('trigger', ''),
+    )
+
     print(f"✅ Images copied to: {dest_dataset_dir}")
-    print(f"✅ Configs deployed to Musubi app.")
+    print(f"✅ Configs deployed to Musubi app and mirrored in publish folder.")

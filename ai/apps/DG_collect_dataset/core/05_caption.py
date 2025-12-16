@@ -17,23 +17,19 @@ OLLAMA_HOST = "http://127.0.0.1:11434"
 os.environ["OLLAMA_HOST"] = OLLAMA_HOST
 os.environ["OLLAMA_MODELS"] = str(utils.MODEL_STORE_ROOT)
 
-def get_system_instruction(trigger, gender):
+def get_system_instruction(trigger, real_name):
     return f"""
-    Task: Describe the image for a Stable Diffusion dataset.
-    Subject: The person in the image is '{trigger}'.
-    
-    CRITICAL RULES:
-    1. START immediately with "{trigger}". Do NOT say "The image shows" or "The image features".
-    2. NEVER say "a man named {trigger}" or "a person". Use the name '{trigger}' as the noun.
-    3. NO MARKDOWN. Do not use bold (**text**) or italics.
-    4. Disentangle the subject: Describe the clothing and background in extreme detail so the AI separates them from the face.
-    
-    BAD EXAMPLE (Do Not Do This):
-    "The image features a man named {trigger} standing in a park. He is wearing a suit."
+You are captioning images for fine-tuning. The subject's secret trigger is "{trigger}" which refers to {real_name}.
 
-    GOOD EXAMPLE (Do This):
-    "{trigger} is standing outdoors in a park with blurred green trees in the background. {trigger} is wearing a navy blue wool suit jacket, a white collared shirt, and a red silk tie with diagonal stripes. The lighting is soft and natural."
-    """
+Ground rules:
+- START the caption with "{trigger}".
+- DO NOT describe the subject's intrinsic appearance (face, head shape, skin tone, hair, eyes, age, build, lips, nose, ears, cheeks, jaw).
+- Focus on everything else: clothing, accessories, pose, hands, body orientation, background, setting, props, lighting, camera angle, depth of field, mood.
+- No Markdown or lists; single concise sentence(s).
+- Avoid phrases like "photo of" or "image of".
+
+Examples of allowed details: "{trigger} wearing a navy suit and red tie, standing at a podium with blurred flags behind, rim-lit from stage lights, shot at medium close-up, f/2.8 shallow depth of field."
+"""
 
 def clean_caption(text, trigger):
     # 1. Kill the specific bad phrases if Qwen ignores us
@@ -52,14 +48,16 @@ def run(slug):
     if not config: return
     
     trigger = config['trigger']
-    gender = config.get('gender', 'm')
     model = config.get('model', 'qwen-vl')
-    gender_str = 'man' if gender == 'm' else 'woman'
+    real_name = config.get('name', slug)
+    gender_str = 'person'
 
     path = utils.get_project_path(slug)
     
-    # --- FIX: USE CORRECT DIR NAMES FROM UTILS ---
-    # Prioritize 04_clean, fallback to 03_validate
+    # --- PAPER TRAIL ARCHITECTURE (Section XIX) ---
+    # INPUT:  04_clean (cleaned images, no captions)
+    # OUTPUT: 05_caption (images COPIED here + .txt captions generated)
+    
     in_dir = path / utils.DIRS.get('clean', '04_clean')
     
     if not in_dir.exists():
@@ -70,7 +68,13 @@ def run(slug):
         print(f"❌ Error: No input images found in {path}")
         return
 
-    print(f"📝 Captioning images in: {in_dir}...")
+    # Create output directory for captioned images (05_caption)
+    out_dir = path / utils.DIRS.get('caption', '05_caption')
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"📝 [05_caption] Paper Trail Architecture")
+    print(f"   INPUT:  {in_dir}")
+    print(f"   OUTPUT: {out_dir}")
     
     # Qwen Setup (4-bit Turbo)
     if model == "qwen-vl":
@@ -100,16 +104,28 @@ def run(slug):
         pass
 
     files = sorted([f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png'))])
-    system_instruction = get_system_instruction(trigger, gender_str)
+    system_instruction = get_system_instruction(trigger, real_name)
+    
+    print(f"   Found {len(files)} images to process...")
 
     for i, f in enumerate(files, 1):
-        txt_path = in_dir / (os.path.splitext(f)[0] + ".txt")
-        if txt_path.exists(): 
+        # Output paths in 05_caption folder
+        out_img_path = out_dir / f
+        txt_path = out_dir / (os.path.splitext(f)[0] + ".txt")
+        
+        # Skip if already captioned
+        if txt_path.exists() and out_img_path.exists(): 
+            print(f"   [{i}/{len(files)}] {f}... (skipped, already done)")
             continue
         
         print(f"   [{i}/{len(files)}] {f}...", end="", flush=True)
         
         try:
+            # Copy image to output folder first
+            import shutil
+            if not out_img_path.exists():
+                shutil.copy2(in_dir / f, out_img_path)
+            
             # Inference Logic
             if model == "qwen-vl":
                 from qwen_vl_utils import process_vision_info

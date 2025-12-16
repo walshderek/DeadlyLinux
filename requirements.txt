@@ -16,6 +16,13 @@ ollama==0.6.1
 retina-face==0.0.17
 qwen-vl-utils==0.0.14
 
+# Google Sheets Integration (for DG_collect_dataset logging)
+google-api-python-client==2.153.0
+google-auth==2.37.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.1
+cryptography==44.0.0
+
 # Web/Scraping Tools (DG_videoscraper dependencies)
 beautifulsoup4==4.14.3
 duckduckgo_search==8.1.1

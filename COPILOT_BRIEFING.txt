@@ -349,3 +349,34 @@ To determine if the system is functional, Copilot must perform this specific 3-s
 
 End of Section XVI.
 
+
+───────────────────────────────────────────────────────────────────
+### XIX. DATA FACTORY ARCHITECTURE (THE "ONE-WAY" FLOW)
+───────────────────────────────────────────────────────────────────
+
+#### A. THE PIPELINE (WSL SIDE)
+All data processing happens inside WSL at `/home/seanf/deadlygraphics/ai/apps/DG_collect_dataset/outputs/<project>`.
+1.  **Acquisition:** Scrape to `01_scrape`.
+2.  **Refinement:** Crop (`02_crop`), Validate (`03_validate`), Clean (`04_clean`).
+3.  **Captioning:** Qwen-VL generates `.txt` files in `05_caption`.
+4.  **Staging (`06_publish`):** The script MUST generate the following structure LOCALLY before deploying:
+    * `/256/`: Contains resized images AND `.txt` captions (e.g., 100 imgs + 100 txts = 200 files).
+    * `/1024/`: Same as above, high-res.
+    * `train_win.bat`: Windows training script.
+    * `train_linux.sh`: Linux training script.
+    * `config_win.toml`: Windows Musubi config.
+    * `config_linux.toml`: Linux Musubi config.
+    * `trigger_word.txt`: The identifier used.
+
+#### B. THE DEPLOYMENT (SHIPPING)
+Once the Staging folder is complete, the script **copies** the relevant files to the destinations. It implies a "Push" model only.
+1.  **Destination 1 (Windows):** `/mnt/c/AI/apps/musubi-tuner/`
+    * Receives: `256/` folder (as dataset), `.bat`, `config_win.toml`.
+2.  **Destination 2 (Linux):** `/home/seanf/deadlygraphics/ai/apps/musubi-tuner/`
+    * Receives: `256/` folder (as dataset), `.sh`, `config_linux.toml`.
+
+#### C. PERMISSIONS & ENVIRONMENT
+* **User:** ALWAYS run as `seanf`. Never `root`.
+* **Environment:** ALWAYS use `.venv` or `.runtime-venv`.
+
+End of Section XIX.

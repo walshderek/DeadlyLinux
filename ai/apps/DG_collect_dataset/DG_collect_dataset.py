@@ -12,6 +12,10 @@ if core_dir not in sys.path:
 
 import utils
 
+# Bootstrap dependencies on import - ensures all required packages are installed
+print("🔍 Checking dependencies...")
+utils.bootstrap(install_reqs=True)
+
 # MAPPING: Step Number -> Module Name
 STEPS = {
     1: "01_setup_scrape",
@@ -28,6 +32,7 @@ def run_pipeline(slug, limit, count, gender, trigger, model, only_step=None):
     
     # Save config first
     utils.save_config(slug, {
+        'name': slug,
         'trigger': trigger,
         'gender': gender,
         'limit': limit,
@@ -85,7 +90,18 @@ def main():
     parser.add_argument("--model", default="qwen-vl", help="Model for captioning")
 
     args = parser.parse_args()
-    run_pipeline(args.name, args.limit, args.count, args.gender, args.trigger, args.model, args.only_step)
+
+    existing_cfg = utils.load_config(args.name)
+
+    # Preserve existing trigger when re-running a specific step
+    trigger = args.trigger
+    if args.only_step and existing_cfg:
+        trigger = existing_cfg.get("trigger", trigger)
+        args.name = existing_cfg.get("name", args.name)
+    elif trigger == "ohwx" or trigger.lower() == "auto":
+        trigger = utils.obfuscate_trigger(args.name)
+
+    run_pipeline(args.name, args.limit, args.count, args.gender, trigger, args.model, args.only_step)
 
 if __name__ == "__main__":
     main()

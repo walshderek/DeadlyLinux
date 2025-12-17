@@ -380,3 +380,86 @@ Once the Staging folder is complete, the script **copies** the relevant files to
 * **Environment:** ALWAYS use `.venv` or `.runtime-venv`.
 
 End of Section XIX.
+
+---
+
+### XX. HARDWARE ACCELERATION STANDARDS (NO CPU FALLBACK)
+
+#### A. THE "NO CPU" RULE
+The pipeline MUST fail immediately if NVIDIA CUDA acceleration is unavailable. Silent fallback to CPU is strictly prohibited due to performance unviability.
+
+#### B. MANDATORY STARTUP CHECKS
+All AI-dependent scripts (specifically `05_caption.py` and `02_crop.py`) must verify hardware availability at startup:
+1.  **Check:** `torch.cuda.is_available()` (for PyTorch) or GPU listing (for TensorFlow).
+2.  **Action:** If `False` or empty, print a fatal error (e.g., "❌ CRITICAL: No GPU found. CPU fallback is disabled.") and execute `sys.exit(1)`.
+
+#### C. DEPENDENCY INSTALLATION STANDARD
+When creating or repairing the `.venv` or `.runtime-venv`, the install command MUST explicitly target the CUDA 12.1 wheel index to prevent getting the default CPU version:
+`pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121`
+
+End of Section XX.
+
+───────────────────────────────────────────────────────────────────
+### XXIV. SUMMARY STEP ARCHITECTURE (07_SUMMARY)
+───────────────────────────────────────────────────────────────────
+
+#### A. LOCAL ARTIFACT REQUIREMENT
+The pipeline MUST create a local directory `outputs/<slug>/07_summary` inside WSL.
+This is the "Paper Trail" - without it, the pipeline is considered INCOMPLETE.
+
+#### B. EXECUTION LOGIC (STRICT ORDER)
+1.  **Source:** The summary script targets the local `05_caption` folder (source of truth).
+2.  **Output:** Artifacts (Contact Sheet `.png` + Caption Summary `.txt`) go to `07_summary`.
+3.  **Copy:** ONLY AFTER generation are these files copied to the Windows warehouse.
+
+The script `DG_dataset_summary.py` MUST accept `--output-dir` to specify where artifacts are saved.
+
+#### C. ARTIFACT CHECKLIST
+After Step 7, the `outputs/<slug>/07_summary/` folder MUST contain:
+* `<slug>_contact_sheet.png` - Visual grid of all training images
+* `<slug>_captions.txt` - Full text dump of all caption files
+
+#### D. DEFAULT PRODUCTION QUOTA
+* **Target:** 100 images per subject (training-grade dataset).
+* **Scrape Buffer:** Collect 150-200 candidates to account for culling in Steps 2-4.
+* **Test Mode:** 50 images (for quick validation only).
+
+#### E. VERIFICATION RULE
+A pipeline run is considered **FAILED** if:
+* `outputs/<slug>/07_summary/` does not exist, OR
+* `outputs/<slug>/07_summary/` is empty (no `.png` or `.txt` files)
+
+The orchestrator script MUST check this condition before declaring success.
+
+End of Section XXIV.
+
+───────────────────────────────────────────────────────────────────
+### XXV. ANTI-HANG SCRAPER PROTOCOLS
+───────────────────────────────────────────────────────────────────
+
+#### A. THE "STALEMATE" RULE
+All scraping loops (scrolling/pagination) MUST have a "no-change" counter.
+1.  **Logic:** If the number of found items does not increase after **3 consecutive scroll attempts**, the loop must break immediately.
+2.  **Logging:** Print `⚠️ Stalemate reached (No new images). Stopping scroll.` to the console.
+3.  **Reset:** The counter resets to 0 whenever new images are found OR a "See More" button is successfully clicked.
+
+#### B. HARD TIMEOUTS
+Network requests in Playwright MUST have hard timeouts:
+* **Page Load:** 15000ms (15 seconds)
+* **Image Download:** 5000ms (5 seconds)
+* **Scroll Wait:** 1500ms between scrolls
+
+If any operation times out, catch the error, log it, and proceed with whatever data was collected.
+
+#### C. QUANTITY VS. SPEED PRINCIPLE
+It is better to return 70 images instantly than to wait 10 minutes trying to find image #71.
+* **Acceptable Loss:** Up to 30% shortfall from target is acceptable if the scraper is stalling.
+* **Recovery:** The pipeline can be re-run with a fresh query set to supplement missing images.
+
+#### D. WATERFALL QUERY STRATEGY
+If a query stalemates before reaching the target:
+1.  Accept the images found from that query
+2.  Move to the next query in the list
+3.  Continue until target is reached OR all queries are exhausted
+
+End of Section XXV.

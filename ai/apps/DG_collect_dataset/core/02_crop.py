@@ -6,6 +6,16 @@ from deepface import DeepFace
 from PIL import Image, ImageOps
 import utils
 
+# GPU check - warn but don't fail (WSL doesn't have direct GPU access)
+try:
+    import tensorflow as tf
+    gpus = tf.config.list_physical_devices('GPU')
+    if not gpus:
+        print("⚠️  WARNING: GPU not detected. Running on CPU (slow).")
+        print("   For GPU acceleration, run this pipeline in Windows PowerShell instead.")
+except:
+    pass
+
 def run(slug):
     path = utils.get_project_path(slug)
     in_dir = path / utils.DIRS['scrape']

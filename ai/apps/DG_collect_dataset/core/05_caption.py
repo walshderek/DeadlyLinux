@@ -12,6 +12,11 @@ if current_dir not in sys.path:
     sys.path.append(current_dir)
 import utils
 
+# GPU check - warn but don't fail (WSL doesn't have direct GPU access)
+if not torch.cuda.is_available():
+    print("⚠️  WARNING: GPU not detected. Running on CPU (slow).")
+    print("   For GPU acceleration, run this pipeline in Windows PowerShell instead.")
+
 # Force localhost for WSL
 OLLAMA_HOST = "http://127.0.0.1:11434"
 os.environ["OLLAMA_HOST"] = OLLAMA_HOST

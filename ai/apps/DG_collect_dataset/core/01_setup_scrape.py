@@ -24,9 +24,15 @@ except ImportError:
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
+# --- ANTI-HANG CONFIG (Section XXV) ---
+MAX_STALEMATE_COUNT = 3      # Stop after 3 failed scrolls (was 15)
+SCROLL_DELAY = 1.5           # Seconds between scrolls (was 2)
+PAGE_LOAD_TIMEOUT = 15000    # 15 seconds for page load (was 120s)
+DOWNLOAD_TIMEOUT = 5         # 5 seconds for image download
+
 def download_image(url, save_path):
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=DOWNLOAD_TIMEOUT)
         if response.status_code == 200:
             with open(save_path, 'wb') as f:
                 f.write(response.content)
@@ -42,12 +48,12 @@ def scrape_bing_playwright(query, limit, save_dir, prefix, start_idx=1):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         try:
-            page.goto(search_url, wait_until="domcontentloaded", timeout=120000)
+            page.goto(search_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
         except TimeoutError:
-            print("❌ Bing page load timed out after 120s.")
+            print(f"❌ Bing page load timed out after {PAGE_LOAD_TIMEOUT/1000}s.")
             browser.close()
-            return []
-        time.sleep(2)
+            return 0
+        time.sleep(SCROLL_DELAY)
         
         urls = []
         seen = set()
@@ -55,10 +61,10 @@ def scrape_bing_playwright(query, limit, save_dir, prefix, start_idx=1):
         
         print(f"--> Scrolling to find {limit} images...")
         
-        while len(urls) < limit and stagnation_counter < 15:
+        while len(urls) < limit:
             prev_len = len(urls)
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(2)
+            time.sleep(SCROLL_DELAY)
             
             thumbnails = page.query_selector_all("a.iusc")
             for thumb in thumbnails:
@@ -73,15 +79,25 @@ def scrape_bing_playwright(query, limit, save_dir, prefix, start_idx=1):
                             urls.append(img_url)
                     except: pass
             
+            # STALEMATE CHECK - count ALWAYS increments if no new images
             if len(urls) == prev_len:
                 stagnation_counter += 1
+                print(f"    Found {len(urls)} unique URLs... (stale x{stagnation_counter})", end='\r')
+                
+                # Try clicking 'See more' buttons (but don't reset counter!)
                 try:
                     if page.is_visible("input[value*='See more']"):
                         page.click("input[value*='See more']", timeout=1000)
+                        time.sleep(SCROLL_DELAY)
                     elif page.is_visible(".btn_seemore"):
                         page.click(".btn_seemore", timeout=1000)
-                    time.sleep(2)
+                        time.sleep(SCROLL_DELAY)
                 except: pass
+                
+                # HARD BREAK after MAX_STALEMATE_COUNT failures
+                if stagnation_counter >= MAX_STALEMATE_COUNT:
+                    print(f"\n⚠️ Stalemate reached (No new images after {MAX_STALEMATE_COUNT} scrolls). Moving on.")
+                    break
             else:
                 stagnation_counter = 0
                 print(f"    Found {len(urls)} unique URLs...", end='\r')
@@ -106,19 +122,6 @@ def scrape_bing_playwright(query, limit, save_dir, prefix, start_idx=1):
     return saved
 
 
-def build_queries(name: str) -> List[str]:
-    base = name.strip()
-    variants = [
-        f"{base} portrait high quality",
-        f"{base} face close up photo",
-        f"{base} headshot official photo",
-        f"{base} press conference portrait",
-        f"{base} speaking at podium portrait",
-        f"{base} studio lighting portrait",
-        f"{base} 4k detailed portrait"
-    ]
-    return variants
-
 def run(slug):
     # 1. Load Config (Orchestrator saved this)
     config = utils.load_config(slug)
@@ -129,7 +132,16 @@ def run(slug):
     # 2. Extract settings
     limit = config.get('limit', 100)
     name = config.get('name', slug.replace("_", " ").title())
-    queries = build_queries(name)
+    
+    # HYBRID APPROACH: Start with quoted name (best accuracy)
+    # Then add supplementary queries if we need more images
+    queries = [
+        f'"{name}"',                    # Primary - exact match
+        f'"{name}" photo',              # Backup 1
+        f'"{name}" portrait',           # Backup 2  
+        f'"{name}" face',               # Backup 3
+        name,                           # Fallback - unquoted (more results, less precise)
+    ]
 
     # 3. Setup Paths
     path = utils.get_project_path(slug)
@@ -142,14 +154,15 @@ def run(slug):
         print(f"✅ Found {len(existing)} images, skipping scrape.")
         return
 
-    # 5. Run Scrape across query variants until limit reached
+    # 5. Run scrape using multiple queries until we hit the limit
     downloaded = len(existing)
-    for q in queries:
+    for query in queries:
         remaining = limit - downloaded
         if remaining <= 0:
             break
-        saved = scrape_bing_playwright(q, remaining, scrape_dir, slug, start_idx=downloaded + 1)
+        saved = scrape_bing_playwright(query, remaining, scrape_dir, slug, start_idx=downloaded + 1)
         downloaded += saved
+    
     print(f"📸 Total scraped: {downloaded} images")
 
 if __name__ == "__main__":

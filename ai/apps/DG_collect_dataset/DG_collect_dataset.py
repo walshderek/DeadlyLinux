@@ -23,16 +23,18 @@ STEPS = {
     3: "03_validate",   
     4: "04_clean",      
     5: "05_caption",    
-    6: "06_publish"     
+    6: "06_publish",
+    7: "07_summary"     
 }
 
-def run_pipeline(slug, limit, count, gender, trigger, model, only_step=None):
+def run_pipeline(slug, display_name, limit, count, gender, trigger, model, only_step=None):
     print(f"🚀 Pipeline Started: {slug}")
     print(f"🔑 Trigger Word: {trigger}")
     
     # Save config first
     utils.save_config(slug, {
-        'name': slug,
+        'slug': slug,
+        'name': display_name,  # Human-readable name for searches
         'trigger': trigger,
         'gender': gender,
         'limit': limit,
@@ -45,7 +47,7 @@ def run_pipeline(slug, limit, count, gender, trigger, model, only_step=None):
         try:
             step_nums = [int(only_step)]
         except ValueError:
-            print(f"❌ Error: --only-step must be a number (1-6).")
+            print(f"❌ Error: --only-step must be a number (1-7).")
             return
     else:
         step_nums = sorted(STEPS.keys())
@@ -86,22 +88,27 @@ def main():
     parser.add_argument("--count", type=int, default=100, help="Target count")
     parser.add_argument("--gender", choices=['m', 'f'], default='m', help="Gender")
     parser.add_argument("--trigger", default="ohwx", help="Trigger word")
-    parser.add_argument("--only-step", help="Run only a specific step number (1-6)")
+    parser.add_argument("--only-step", help="Run only a specific step number (1-7)")
     parser.add_argument("--model", default="qwen-vl", help="Model for captioning")
 
     args = parser.parse_args()
+    
+    # Determine slug (snake_case) and display name (Title Case with spaces)
+    raw_name = args.name
+    slug = raw_name.lower().replace(" ", "_").replace("-", "_")
+    display_name = raw_name.replace("_", " ").title()
 
-    existing_cfg = utils.load_config(args.name)
+    existing_cfg = utils.load_config(slug)
 
     # Preserve existing trigger when re-running a specific step
     trigger = args.trigger
     if args.only_step and existing_cfg:
         trigger = existing_cfg.get("trigger", trigger)
-        args.name = existing_cfg.get("name", args.name)
+        display_name = existing_cfg.get("name", display_name)
     elif trigger == "ohwx" or trigger.lower() == "auto":
-        trigger = utils.obfuscate_trigger(args.name)
+        trigger = utils.obfuscate_trigger(display_name)
 
-    run_pipeline(args.name, args.limit, args.count, args.gender, trigger, args.model, args.only_step)
+    run_pipeline(slug, display_name, args.limit, args.count, args.gender, trigger, args.model, args.only_step)
 
 if __name__ == "__main__":
     main()

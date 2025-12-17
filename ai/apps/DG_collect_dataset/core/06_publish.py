@@ -241,6 +241,10 @@ def run(slug):
     
     TARGET_RES = 256
     
+    # Create 256 subfolder in Windows destination
+    dest_256_dir = dest_dataset_dir / "256"
+    dest_256_dir.mkdir(parents=True, exist_ok=True)
+    
     for f in files:
         if resize_pad_to_square(in_dir / f, res_dir_1024 / f, TARGET_SIZE):
             txt = os.path.splitext(f)[0] + ".txt"
@@ -253,13 +257,13 @@ def run(slug):
                 res_dir.mkdir(exist_ok=True)
                 img = Image.open(res_dir_1024 / f)
                 img.resize((res, res), RESAMPLER).save(res_dir / f)
-                img.resize((res, res), RESAMPLER).save(dest_dataset_dir / f)
+                img.resize((res, res), RESAMPLER).save(dest_256_dir / f)
                 if (in_dir / txt).exists():
                     shutil.copy(in_dir / txt, res_dir / txt)
-                    shutil.copy(in_dir / txt, dest_dataset_dir / txt)
+                    shutil.copy(in_dir / txt, dest_256_dir / txt)
 
     # 5. Generate Configs
-    win_dataset_path = f"{WIN_DATASETS_ROOT_STR}/{slug}"
+    win_dataset_path = f"{WIN_DATASETS_ROOT_STR}/{slug}/256"
     res_str = "256"
     
     toml_name = f"{slug}_{res_str}_win.toml"

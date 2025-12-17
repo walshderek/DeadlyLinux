@@ -133,14 +133,14 @@ def run(slug):
     limit = config.get('limit', 100)
     name = config.get('name', slug.replace("_", " ").title())
     
-    # HYBRID APPROACH: Start with quoted name (best accuracy)
-    # Then add supplementary queries if we need more images
+    # HYBRID APPROACH: Use person-specific disambiguation terms
+    # Better for famous people - avoids cartoon/fictional characters
     queries = [
-        f'"{name}"',                    # Primary - exact match
-        f'"{name}" photo',              # Backup 1
-        f'"{name}" portrait',           # Backup 2  
-        f'"{name}" face',               # Backup 3
-        name,                           # Fallback - unquoted (more results, less precise)
+        f'"{name}" actor OR politician OR celebrity',  # Primary - disambiguate from fiction
+        f'"{name}" portrait photo',                    # Backup 1 - face focused
+        f'"{name}" headshot',                          # Backup 2 - professional shots
+        f'"{name}" interview',                         # Backup 3 - real person context
+        f'"{name}" award ceremony',                    # Backup 4 - public appearances
     ]
 
     # 3. Setup Paths

@@ -283,6 +283,7 @@ def create_contact_sheet(folder_path, output_dir, max_image_dimension, dataset_n
 def run(slug):
     """
     Pipeline entry point - generates summary for the published dataset.
+    Uses LOCAL 06_publish/256 folder (not Windows path).
     """
     from pathlib import Path
     import utils
@@ -292,15 +293,14 @@ def run(slug):
         print(f"⚠️ No config found for {slug}")
         return
     
-    # Get the Windows destination path where 256 images were published
-    DEST_APP_ROOT = Path("/mnt/c/AI/apps/musubi-tuner")
-    DEST_DATASETS = DEST_APP_ROOT / "files" / "datasets"
-    
+    # Get the LOCAL 06_publish/256 path where images are published
+    project_path = utils.get_project_path(slug)
     name = config.get('name', slug)
     
-    # The 256 folder contains the final dataset
-    dataset_folder = DEST_DATASETS / name / "256"
-    output_dir = DEST_DATASETS  # Save summary files alongside the dataset folder
+    # The 256 folder is inside 06_publish (local Linux path)
+    dataset_folder = project_path / "06_publish" / "256"
+    output_dir = project_path / "07_summary"
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     if not dataset_folder.exists():
         print(f"⚠️ Dataset folder not found: {dataset_folder}")

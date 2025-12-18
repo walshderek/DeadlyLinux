@@ -1,0 +1,19 @@
+[general]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true 
+bucket_no_upscale = false
+
+[[datasets]]
+image_directory = "/mnt/c/AI/apps/musubi-tuner/source_data/shrek-v7-wan2.2/photos"
+cache_directory = "/mnt/c/AI/apps/musubi-tuner/source_data/shrek-v7-wan2.2/photos/cache"
+num_repeats = 1
+resolution = [256,256]
+
+[[datasets]]
+video_directory = "/mnt/c/AI/apps/musubi-tuner/source_data/shrek-v7-wan2.2/videos"
+cache_directory = "/mnt/c/AI/apps/musubi-tuner/source_data/shrek-v7-wan2.2/videos/cache"
+num_repeats = 1
+resolution = [176,176]
+frame_extraction = "full"
+max_frames = 17

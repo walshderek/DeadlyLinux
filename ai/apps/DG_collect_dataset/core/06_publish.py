@@ -40,7 +40,7 @@ def resize_pad_to_square(img_path, save_path, size):
     except: return False
 
 def generate_toml(local_windows_path, resolution):
-    safe_cache_dir = f"{local_windows_path}_cache"
+    # Match Shrek: cache_directory is the same as image_directory (no _cache subfolder)
     return f"""[general]
 caption_extension = ".txt"
 batch_size = 1
@@ -48,7 +48,7 @@ enable_bucket = true
 bucket_no_upscale = false
 [[datasets]]
 image_directory = "{local_windows_path}"
-cache_directory = "{safe_cache_dir}"
+cache_directory = "{local_windows_path}"
 num_repeats = 1
 resolution = [{resolution},{resolution}]
 """
@@ -59,22 +59,38 @@ SETLOCAL enabledelayedexpansion
 
 REM --- PATHS ---
 set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
+set "OUT=%WAN_ROOT%\outputs\{slug}"
+    return f"""@echo off
+SETLOCAL enabledelayedexpansion
+
+REM --- PATHS ---
+set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
 set "CFG={toml_path_win_c}"
 
 REM --- OUTPUTS ---
-set "OUT=\"%WAN_ROOT%\\outputs\\{slug}\""
-set "LOGDIR=\"%WAN_ROOT%\\logs\""
+set "OUT=%WAN_ROOT%\outputs\{slug}"
+set "LOGDIR=%WAN_ROOT%\logs"
 set "OUTNAME={slug}"
 
 REM --- MODELS ---
-set "DIT_LOW=\"{PATH_DIT_LOW}\""
-set "DIT_HIGH=\"{PATH_DIT_HIGH}\""
-set "VAE=\"{PATH_VAE}\""
-set "T5=\"{PATH_T5}\""
+set "DIT_LOW={PATH_DIT_LOW}"
+set "DIT_HIGH={PATH_DIT_HIGH}"
+set "VAE={PATH_VAE}"
+set "T5={PATH_T5}"
+
+REM --- DEBUG: Print all paths
+echo WAN_ROOT: %WAN_ROOT%
+echo CFG: %CFG%
+echo OUT: %OUT%
+echo LOGDIR: %LOGDIR%
+echo DIT_LOW: %DIT_LOW%
+echo DIT_HIGH: %DIT_HIGH%
+echo VAE: %VAE%
+echo T5: %T5%
 
 REM --- EXECUTION ---
 cd /d "%WAN_ROOT%"
-call venv\scripts\activate
+call .\venv\Scripts\activate.bat
 
 if not exist %OUT% mkdir %OUT%
 if not exist %LOGDIR% mkdir %LOGDIR%
@@ -85,6 +101,213 @@ python wan_cache_latents.py --dataset_config "%CFG%" --vae "%VAE%" --vae_dtype f
 echo Starting T5 Cache...
 python wan_cache_text_encoder_outputs.py --dataset_config "%CFG%" --t5 "%T5%" --batch_size 16 --fp8_t5
 
+echo Starting Training...
+python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
+    --dataset_config "%CFG%" ^
+    --discrete_flow_shift 3 ^
+    --dit "%DIT_LOW%" ^
+    --dit_high_noise "%DIT_HIGH%" ^
+    --fp8_base ^
+    --fp8_scaled ^
+    --fp8_t5 ^
+    --gradient_accumulation_steps 1 ^
+    --gradient_checkpointing ^
+    --img_in_txt_in_offloading ^
+    --learning_rate 0.00001 ^
+    --max_grad_norm 1.0 ^
+    --logging_dir "%LOGDIR%" ^
+    --lr_scheduler cosine ^
+    --lr_warmup_steps 200 ^
+    --max_data_loader_n_workers 2 ^
+    --max_train_epochs 35 ^
+    --save_every_n_epochs 5 ^
+    --seed 42 ^
+    --t5 "%T5%" ^
+    --task t2v-A14B ^
+    --timestep_boundary 875 ^
+    --timestep_sampling logsnr ^
+    --vae "%VAE%" ^
+    --vae_cache_cpu ^
+    --vae_dtype bfloat16 ^
+    --network_module networks.lora_wan ^
+    --network_dim 16 ^
+    --network_alpha 16 ^
+    --mixed_precision bf16 ^
+    --blocks_to_swap 24 ^
+    --optimizer_type AdamW8bit ^
+    --sdpa
+
+
+ENDLOCAL
+"""
+REM --- MODELS ---
+set "DIT_LOW={PATH_DIT_LOW}"
+set "DIT_HIGH={PATH_DIT_HIGH}"
+set "VAE={PATH_VAE}"
+set "T5={PATH_T5}"
+
+REM --- DEBUG: Print all paths
+echo WAN_ROOT: %WAN_ROOT%
+echo CFG: %CFG%
+echo OUT: %OUT%
+echo LOGDIR: %LOGDIR%
+echo DIT_LOW: %DIT_LOW%
+echo DIT_HIGH: %DIT_HIGH%
+echo VAE: %VAE%
+echo T5: %T5%
+
+REM --- EXECUTION ---
+cd /d "%WAN_ROOT%"
+call ".\venv\Scripts\activate.bat"
+
+    --dit "%DIT_LOW%" ^
+    --fp8_scaled ^
+    return f"""@echo off
+SETLOCAL enabledelayedexpansion
+
+REM --- PATHS ---
+set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
+set "CFG={toml_path_win_c}"
+
+REM --- OUTPUTS ---
+set "OUT=%WAN_ROOT%\outputs\{slug}"
+set "LOGDIR=%WAN_ROOT%\logs"
+set "OUTNAME={slug}"
+
+REM --- MODELS ---
+set "DIT_LOW={PATH_DIT_LOW}"
+set "DIT_HIGH={PATH_DIT_HIGH}"
+set "VAE={PATH_VAE}"
+set "T5={PATH_T5}"
+
+REM --- DEBUG: Print all paths
+echo WAN_ROOT: %WAN_ROOT%
+echo CFG: %CFG%
+echo OUT: %OUT%
+echo LOGDIR: %LOGDIR%
+echo DIT_LOW: %DIT_LOW%
+echo DIT_HIGH: %DIT_HIGH%
+echo VAE: %VAE%
+echo T5: %T5%
+
+REM --- EXECUTION ---
+cd /d "%WAN_ROOT%"
+call ".\venv\Scripts\activate.bat"
+
+ENDLOCAL
+    return f"""@echo off
+SETLOCAL enabledelayedexpansion
+
+REM --- PATHS ---
+set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
+set "CFG={toml_path_win_c}"
+
+REM --- OUTPUTS ---
+set "OUT=%WAN_ROOT%\outputs\{slug}"
+set "LOGDIR=%WAN_ROOT%\logs"
+set "OUTNAME={slug}"
+
+REM --- MODELS ---
+set "DIT_LOW={PATH_DIT_LOW}"
+set "DIT_HIGH={PATH_DIT_HIGH}"
+set "VAE={PATH_VAE}"
+set "T5={PATH_T5}"
+
+REM --- DEBUG: Print all paths
+echo WAN_ROOT: %WAN_ROOT%
+echo CFG: %CFG%
+echo OUT: %OUT%
+echo LOGDIR: %LOGDIR%
+echo DIT_LOW: %DIT_LOW%
+echo DIT_HIGH: %DIT_HIGH%
+echo VAE: %VAE%
+echo T5: %T5%
+
+REM --- EXECUTION ---
+cd /d "%WAN_ROOT%"
+call ".\venv\Scripts\activate.bat"
+
+
+    return f"""@echo off
+SETLOCAL enabledelayedexpansion
+
+REM --- PATHS ---
+set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
+set "CFG={toml_path_win_c}"
+
+REM --- OUTPUTS ---
+set "OUT=%WAN_ROOT%\outputs\{slug}"
+set "LOGDIR=%WAN_ROOT%\logs"
+set "OUTNAME={slug}"
+
+REM --- MODELS ---
+set "DIT_LOW={PATH_DIT_LOW}"
+set "DIT_HIGH={PATH_DIT_HIGH}"
+set "VAE={PATH_VAE}"
+set "T5={PATH_T5}"
+
+REM --- DEBUG: Print all paths
+echo WAN_ROOT: %WAN_ROOT%
+echo CFG: %CFG%
+echo OUT: %OUT%
+echo LOGDIR: %LOGDIR%
+echo DIT_LOW: %DIT_LOW%
+echo DIT_HIGH: %DIT_HIGH%
+echo VAE: %VAE%
+echo T5: %T5%
+
+REM --- EXECUTION ---
+cd /d "%WAN_ROOT%"
+call ".\venv\Scripts\activate.bat"
+
+if not exist %OUT% mkdir %OUT%
+if not exist %LOGDIR% mkdir %LOGDIR%
+
+echo Starting VAE Latent Cache...
+python wan_cache_latents.py --dataset_config "%CFG%" --vae "%VAE%" --vae_dtype float16
+
+echo Starting T5 Cache...
+python wan_cache_text_encoder_outputs.py --dataset_config "%CFG%" --t5 "%T5%" --batch_size 16 --fp8_t5
+
+echo Starting Training...
+python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
+    --dataset_config "%CFG%" ^
+    --discrete_flow_shift 3 ^
+    --dit "%DIT_LOW%" ^
+    --dit_high_noise "%DIT_HIGH%" ^
+    --fp8_base ^
+    --fp8_scaled ^
+    --fp8_t5 ^
+    --gradient_accumulation_steps 1 ^
+    --gradient_checkpointing ^
+    --img_in_txt_in_offloading ^
+    --learning_rate 0.00001 ^
+    --max_grad_norm 1.0 ^
+    --logging_dir "%LOGDIR%" ^
+    --lr_scheduler cosine ^
+    --lr_warmup_steps 200 ^
+    --max_data_loader_n_workers 2 ^
+    --max_train_epochs 35 ^
+    --save_every_n_epochs 5 ^
+    --seed 42 ^
+    --t5 "%T5%" ^
+    --task t2v-A14B ^
+    --timestep_boundary 875 ^
+    --timestep_sampling logsnr ^
+    --vae "%VAE%" ^
+    --vae_cache_cpu ^
+    --vae_dtype bfloat16 ^
+    --network_module networks.lora_wan ^
+    --network_dim 16 ^
+    --network_alpha 16 ^
+    --mixed_precision bf16 ^
+    --blocks_to_swap 24 ^
+    --optimizer_type AdamW8bit ^
+    --sdpa
+
+
+ENDLOCAL
+"""
 echo Starting Training...
 venv\Scripts\accelerate.exe launch --num_processes 1 "wan_train_network.py" ^
     --dataset_config "%CFG%" ^

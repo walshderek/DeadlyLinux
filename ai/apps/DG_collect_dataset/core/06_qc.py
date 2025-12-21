@@ -3,9 +3,7 @@ import os
 import shutil
 from pathlib import Path
 
-# Force CPU for DeepFace/TensorFlow to avoid JIT/CUDA errors in QC
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3" # Suppress TF logging
+
 
 import utils
 
@@ -20,27 +18,30 @@ def run(slug):
     files = [f for f in os.listdir(in_dir) if f.lower().endswith('.jpg')]
     if not files: return
 
-    # Lazy import to apply env vars first
-    from deepface import DeepFace
+
+    from insightface.app import FaceAnalysis
     from sklearn.cluster import DBSCAN
     import numpy as np
+
+    face_app = FaceAnalysis()
+    face_app.prepare(ctx_id=0)
 
     embeddings = []
     valid_files = []
 
     print(f"   Generating embeddings for {len(files)} images...")
-    # 1. Get Embeddings
     for f in files:
         try:
-            # Get face embedding
-            embedding = DeepFace.represent(
-                img_path=str(in_dir / f), 
-                model_name="Facenet", 
-                enforce_detection=False
-            )[0]["embedding"]
-            embeddings.append(embedding)
+            img_pil = Image.open(in_dir / f).convert("RGB")
+            img_np = np.array(img_pil)
+            faces = face_app.get(img_np)
+            if not faces:
+                continue
+            # Use the largest face
+            face = max(faces, key=lambda x: x.bbox[2]*x.bbox[3])
+            embeddings.append(face.embedding)
             valid_files.append(f)
-        except Exception: 
+        except Exception:
             pass
     
     if not embeddings: 

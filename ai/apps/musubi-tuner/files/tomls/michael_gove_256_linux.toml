@@ -1,0 +1,10 @@
+[general]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = false
+[[datasets]]
+image_directory = "/home/seanf/deadlygraphics/ai/apps/musubi-tuner/files/datasets/michael_gove/256"
+cache_directory = "/home/seanf/deadlygraphics/ai/apps/musubi-tuner/files/datasets/michael_gove/256_cache"
+num_repeats = 1
+resolution = [256,256]

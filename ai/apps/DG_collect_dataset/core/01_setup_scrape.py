@@ -133,14 +133,9 @@ def run(slug):
     limit = config.get('limit', 100)
     name = config.get('name', slug.replace("_", " ").title())
     
-    # HYBRID APPROACH: Use person-specific disambiguation terms
-    # Better for famous people - avoids cartoon/fictional characters
+    # SIMPLIFIED: Use a single, precise Bing query for the person's name, prioritize high-res
     queries = [
-        f'"{name}" actor OR politician OR celebrity',  # Primary - disambiguate from fiction
-        f'"{name}" portrait photo',                    # Backup 1 - face focused
-        f'"{name}" headshot',                          # Backup 2 - professional shots
-        f'"{name}" interview',                         # Backup 3 - real person context
-        f'"{name}" award ceremony',                    # Backup 4 - public appearances
+        f'"{name}" high resolution portrait',
     ]
 
     # 3. Setup Paths
@@ -154,7 +149,7 @@ def run(slug):
         print(f"✅ Found {len(existing)} images, skipping scrape.")
         return
 
-    # 5. Run scrape using multiple queries until we hit the limit
+    # 5. Run scrape using the single query
     downloaded = len(existing)
     for query in queries:
         remaining = limit - downloaded
@@ -162,8 +157,10 @@ def run(slug):
             break
         saved = scrape_bing_playwright(query, remaining, scrape_dir, slug, start_idx=downloaded + 1)
         downloaded += saved
-    
-    print(f"📸 Total scraped: {downloaded} images")
+    if downloaded == 0:
+        print(f"❌ No images were scraped for {name}. Please check the query or try a different name.")
+    else:
+        print(f"📸 Total scraped: {downloaded} images")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

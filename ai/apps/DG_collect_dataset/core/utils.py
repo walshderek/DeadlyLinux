@@ -1,3 +1,20 @@
+# Utility: Count images for a given step
+def count_images_for_step(slug, step_num):
+    path = get_project_path(slug)
+    # Map step to output dir
+    step_to_dir = {
+        1: DIRS['scrape'],
+        2: DIRS['crop'],
+        3: DIRS['validate'],
+        4: DIRS['clean'],
+        5: DIRS['caption'],
+        6: '06_publish/256',
+        7: '07_summary',
+    }
+    out_dir = path / step_to_dir.get(step_num, '')
+    if not out_dir.exists():
+        return 0
+    return len([f for f in os.listdir(out_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg', '.webp'))])
 import sys
 import os
 import subprocess
@@ -170,8 +187,9 @@ def obfuscate_trigger(name: str) -> str:
     if not base:
         base = "anon"
     obf = ''.join(subst.get(ch, ch) for ch in base)
-    # pad with random digits to reduce collisions
-    suffix = str(random.randint(100, 999))
+    # deterministic: hash the name for suffix
+    import hashlib
+    suffix = hashlib.md5(base.encode()).hexdigest()[:4]
     return (obf + suffix).upper()
 
 

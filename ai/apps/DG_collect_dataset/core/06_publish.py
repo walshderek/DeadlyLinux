@@ -26,7 +26,7 @@ WIN_DATASETS_ROOT_STR = r"C:/AI/apps/musubi-tuner/files/datasets"
 
 # --- MODEL PATHS (LOCAL C:) ---
 PATH_T5 = r"C:\AI\models\clip\models_t5_umt5-xxl-enc-bf16.pth"
-PATH_VAE = r"C:\AI\models\vae\WAN\wan_2.1_vae.pth"
+PATH_VAE = r"C:\AI\models\vae\WAN\Wan2.1_VAE.pth"
 PATH_DIT_LOW = r"C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\fp16\wan2.2_t2v_low_noise_14B_fp16.safetensors"
 PATH_DIT_HIGH = r"C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\fp16\wan2.2_t2v_high_noise_14B_fp16.safetensors"
 
@@ -62,22 +62,22 @@ set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
 set "CFG={toml_path_win_c}"
 
 REM --- OUTPUTS ---
-set "OUT=%WAN_ROOT%\\outputs\\{slug}"
-set "LOGDIR=%WAN_ROOT%\\logs"
+set "OUT=\"%WAN_ROOT%\\outputs\\{slug}\""
+set "LOGDIR=\"%WAN_ROOT%\\logs\""
 set "OUTNAME={slug}"
 
 REM --- MODELS ---
-set "DIT_LOW={PATH_DIT_LOW}"
-set "DIT_HIGH={PATH_DIT_HIGH}"
-set "VAE={PATH_VAE}"
-set "T5={PATH_T5}"
+set "DIT_LOW=\"{PATH_DIT_LOW}\""
+set "DIT_HIGH=\"{PATH_DIT_HIGH}\""
+set "VAE=\"{PATH_VAE}\""
+set "T5=\"{PATH_T5}\""
 
 REM --- EXECUTION ---
 cd /d "%WAN_ROOT%"
-call venv\\scripts\\activate
+call venv\scripts\activate
 
-if not exist "%OUT%" mkdir "%OUT%"
-if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+if not exist %OUT% mkdir %OUT%
+if not exist %LOGDIR% mkdir %LOGDIR%
 
 echo Starting VAE Latent Cache...
 python wan_cache_latents.py --dataset_config "%CFG%" --vae "%VAE%" --vae_dtype float16
@@ -86,46 +86,45 @@ echo Starting T5 Cache...
 python wan_cache_text_encoder_outputs.py --dataset_config "%CFG%" --t5 "%T5%" --batch_size 16 --fp8_t5
 
 echo Starting Training...
-accelerate launch --num_processes 1 "wan_train_network.py" ^
-  --dataset_config "%CFG%" ^
-  --discrete_flow_shift 3 ^
-  --dit "%DIT_LOW%" ^
-  --dit_high_noise "%DIT_HIGH%" ^
-  --fp8_base ^
-  --fp8_scaled ^
-  --fp8_t5 ^
-  --gradient_accumulation_steps 1 ^
-  --gradient_checkpointing ^
-  --img_in_txt_in_offloading ^
-  --learning_rate 0.00001 ^
-  --logging_dir "%LOGDIR%" ^
-  --lr_scheduler cosine ^
-  --lr_warmup_steps 100 ^
-  --max_data_loader_n_workers 6 ^
-  --max_train_epochs 35 ^
-  --save_every_n_epochs 5 ^
-  --seed 42 ^
-  --t5 "%T5%" ^
-  --task t2v-A14B ^
-  --timestep_boundary 875 ^
-  --timestep_sampling logsnr ^
-  --vae "%VAE%" ^
-  --vae_cache_cpu ^
-  --vae_dtype float16 ^
-  --network_module networks.lora_wan ^
-  --network_dim 16 ^
-  --network_alpha 16 ^
-  --mixed_precision fp16 ^
-  --min_timestep 0 ^
-  --max_timestep 1000 ^
-  --offload_inactive_dit ^
-  --optimizer_type AdamW8bit ^
-  --sdpa
+venv\Scripts\accelerate.exe launch --num_processes 1 "wan_train_network.py" ^
+    --dataset_config "%CFG%" ^
+    --discrete_flow_shift 3 ^
+    --dit "%DIT_LOW%" ^
+    --dit_high_noise "%DIT_HIGH%" ^
+    --fp8_base ^
+    --fp8_scaled ^
+    --fp8_t5 ^
+    --gradient_accumulation_steps 1 ^
+    --gradient_checkpointing ^
+    --img_in_txt_in_offloading ^
+    --learning_rate 0.00001 ^
+    --logging_dir "%LOGDIR%" ^
+    --lr_scheduler cosine ^
+    --lr_warmup_steps 100 ^
+    --max_data_loader_n_workers 6 ^
+    --max_train_epochs 35 ^
+    --save_every_n_epochs 5 ^
+    --seed 42 ^
+    --t5 "%T5%" ^
+    --task t2v-A14B ^
+    --timestep_boundary 875 ^
+    --timestep_sampling logsnr ^
+    --vae "%VAE%" ^
+    --vae_cache_cpu ^
+    --vae_dtype float16 ^
+    --network_module networks.lora_wan ^
+    --network_dim 16 ^
+    --network_alpha 16 ^
+    --mixed_precision fp16 ^
+    --min_timestep 0 ^
+    --max_timestep 1000 ^
+    --offload_inactive_dit ^
+    --optimizer_type AdamW8bit ^
+    --sdpa
 
-pause
+
 ENDLOCAL
 """
-
 
 def generate_sh(slug, toml_path_linux):
         return f"""#!/usr/bin/env bash
@@ -264,32 +263,42 @@ def run(slug):
 
     # 5. Generate Configs
     win_dataset_path = f"{WIN_DATASETS_ROOT_STR}/{slug}/256"
+    linux_dataset_path = f"/home/seanf/deadlygraphics/ai/apps/musubi-tuner/files/datasets/{slug}/256"
     res_str = "256"
-    
-    toml_name = f"{slug}_{res_str}_win.toml"
+
+    toml_name_win = f"{slug}_{res_str}_win.toml"
+    toml_name_linux = f"{slug}_{res_str}_linux.toml"
     bat_name = f"train_{slug}_{res_str}.bat"
     sh_name = f"train_{slug}_{res_str}.sh"
-    
-    toml_content = generate_toml(win_dataset_path, TARGET_RES)
-    bat_content = generate_bat(slug, f"{WIN_TOML_DIR_STR}\\{toml_name}")
-    sh_content = generate_sh(slug, f"{DEST_TOML_DIR / toml_name}")
 
-    # 6. Deploy to Musubi app
+    toml_content_win = generate_toml(win_dataset_path, TARGET_RES)
+    toml_content_linux = generate_toml(linux_dataset_path, TARGET_RES)
+    bat_content = generate_bat(slug, f"{WIN_TOML_DIR_STR}\{toml_name_win}")
+    sh_content = generate_sh(slug, f"/home/seanf/deadlygraphics/ai/apps/musubi-tuner/files/tomls/{toml_name_linux}")
+
+    # 6. Deploy to Musubi app (Windows)
     DEST_TOML_DIR.mkdir(parents=True, exist_ok=True)
-    
-    with open(DEST_TOML_DIR / toml_name, "w") as f: 
-        f.write(toml_content)
-    
-    with open(DEST_APP_ROOT / bat_name, "w") as f: 
+    with open(DEST_TOML_DIR / toml_name_win, "w") as f:
+        f.write(toml_content_win)
+    with open(DEST_APP_ROOT / bat_name, "w") as f:
         f.write(bat_content)
 
-    with open(DEST_APP_ROOT / sh_name, "w") as f:
+    # 6b. Deploy to Musubi app (Linux/WSL)
+    linux_toml_dir = Path("/home/seanf/deadlygraphics/ai/apps/musubi-tuner/files/tomls")
+    linux_toml_dir.mkdir(parents=True, exist_ok=True)
+    with open(linux_toml_dir / toml_name_linux, "w") as f:
+        f.write(toml_content_linux)
+    # Move .sh to /home/seanf/deadlygraphics/ai/apps/musubi-tuner/
+    linux_app_root = Path("/home/seanf/deadlygraphics/ai/apps/musubi-tuner")
+    with open(linux_app_root / sh_name, "w") as f:
         f.write(sh_content)
-    os.chmod(DEST_APP_ROOT / sh_name, 0o755)
+    os.chmod(linux_app_root / sh_name, 0o755)
 
     # 7. Also drop copies in publish folder alongside trigger
-    with open(publish_root / toml_name, "w") as f:
-        f.write(toml_content)
+    with open(publish_root / toml_name_win, "w") as f:
+        f.write(toml_content_win)
+    with open(publish_root / toml_name_linux, "w") as f:
+        f.write(toml_content_linux)
     with open(publish_root / bat_name, "w") as f:
         f.write(bat_content)
     with open(publish_root / sh_name, "w") as f:

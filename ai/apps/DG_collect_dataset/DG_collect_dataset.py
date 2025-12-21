@@ -53,6 +53,7 @@ def run_pipeline(slug, display_name, limit, count, gender, trigger, model, only_
         step_nums = sorted(STEPS.keys())
 
     # Execute Steps
+    step_success = True
     for step_num in step_nums:
         module_name = STEPS.get(step_num)
         if not module_name:
@@ -60,26 +61,37 @@ def run_pipeline(slug, display_name, limit, count, gender, trigger, model, only_
             continue
 
         print(f"\n--> [{module_name}] Running Step {step_num}...")
-        
         try:
             # Dynamic Import
             module = importlib.import_module(module_name)
-            
             # Run the module
             if hasattr(module, 'run'):
+                before = utils.count_images_for_step(slug, step_num)
                 module.run(slug)
+                after = utils.count_images_for_step(slug, step_num)
+                if after == 0:
+                    print(f"❌ Step {step_num} ({module_name}) produced zero valid images. Stopping pipeline.")
+                    step_success = False
+                    break
             else:
                 print(f"❌ Error: {module_name} does not have a 'run(slug)' function.")
-                
+                step_success = False
+                break
         except ImportError as e:
             print(f"❌ Error: Could not load script '{module_name}'. Details: {e}")
+            step_success = False
+            break
         except Exception as e:
             print(f"❌ Error during {module_name}: {e}")
             import traceback
             traceback.print_exc()
-            return 
+            step_success = False
+            break
 
-    print(f"\n✅ Pipeline Complete for {slug}")
+    if step_success:
+        print(f"\n✅ Pipeline Complete for {slug}")
+    else:
+        print(f"\n❌ Pipeline failed for {slug}. See errors above.")
 
 def main():
     parser = argparse.ArgumentParser(description="DeadlyGraphics Dataset Pipeline")
@@ -100,13 +112,11 @@ def main():
 
     existing_cfg = utils.load_config(slug)
 
-    # Preserve existing trigger when re-running a specific step
-    trigger = args.trigger
+    # Always use deterministic trigger from project name
+    trigger = utils.obfuscate_trigger(display_name)
     if args.only_step and existing_cfg:
         trigger = existing_cfg.get("trigger", trigger)
         display_name = existing_cfg.get("name", display_name)
-    elif trigger == "ohwx" or trigger.lower() == "auto":
-        trigger = utils.obfuscate_trigger(display_name)
 
     run_pipeline(slug, display_name, args.limit, args.count, args.gender, trigger, args.model, args.only_step)
 

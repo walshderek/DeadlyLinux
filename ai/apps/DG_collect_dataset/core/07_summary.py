@@ -280,7 +280,155 @@ def create_contact_sheet(folder_path, output_dir, max_image_dimension, dataset_n
         print(f"\nERROR: Failed to save contact sheet. Reason: {e}")
 
 
+import os
+import sys
+from PIL import Image, ImageDraw, ImageFont
+import math
+import utils
+
+# --- CONFIG ---
+MAX_IMAGE_DIMENSION = 2048 
+FONT_SIZE = 20
+PADDING = 15
+
+import os
+import sys
+from PIL import Image, ImageDraw, ImageFont
+import math
+
+# Bootstrap utils
+current_dir = os.path.dirname(os.path.abspath(__file__))
+core_dir = os.path.join(current_dir, "core")
+if core_dir not in sys.path:
+    sys.path.append(core_dir)
+import utils
+
+# --- CONFIG ---
+MAX_IMAGE_DIMENSION = 2048 
+PADDING = 15
+
 def run(slug):
+    path = utils.get_project_path(slug)
+    
+    # Read from 06_publish/256
+    dataset_folder = path / utils.DIRS.get('publish', '06_publish') / "256"
+    output_dir = path / utils.DIRS.get('summary', '07_summary')
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not dataset_folder.exists():
+        print(f"❌ Publish folder missing: {dataset_folder}")
+        return
+
+    print(f"📊 Generating summary for {slug}...")
+    
+    images = sorted([f for f in os.listdir(dataset_folder) if f.lower().endswith('.jpg')])
+    if not images:
+        print("No images found.")
+        return
+
+    num_images = len(images)
+    cols = math.ceil(math.sqrt(num_images))
+    rows = math.ceil(num_images / cols)
+    
+    thumb_size = 256
+    w = cols * (thumb_size + PADDING) + PADDING
+    h = rows * (thumb_size + PADDING + 40) + PADDING 
+    
+    bg = Image.new('RGB', (w, h), (255, 255, 255))
+    draw = ImageDraw.Draw(bg)
+    
+    try:
+        font = ImageFont.load_default()
+    except: pass
+
+    for idx, img_file in enumerate(images):
+        r, c = divmod(idx, cols)
+        x = c * (thumb_size + PADDING) + PADDING
+        y = r * (thumb_size + PADDING + 40) + PADDING
+        
+        try:
+            im = Image.open(dataset_folder / img_file)
+            im.thumbnail((thumb_size, thumb_size))
+            bg.paste(im, (x, y))
+            
+            # Draw Caption snippet
+            txt_file = os.path.splitext(img_file)[0] + ".txt"
+            if (dataset_folder / txt_file).exists():
+                with open(dataset_folder / txt_file, "r") as f:
+                    cap = f.read(45) + "..." 
+                draw.text((x, y + thumb_size + 5), cap, fill=(0,0,0), font=font)
+        except Exception as e:
+            print(f"Error on {img_file}: {e}")
+
+    save_path = output_dir / f"{slug}_summary.jpg"
+    bg.save(save_path)
+    print(f"✅ Summary saved: {save_path}")
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        run(sys.argv[1])
+    path = utils.get_project_path(slug)
+    
+    # Read from 06_publish/256
+    # This ensures we are summarizing exactly what was sent to training
+    dataset_folder = path / utils.DIRS.get('publish', '06_publish') / "256"
+    output_dir = path / utils.DIRS.get('summary', '07_summary')
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not dataset_folder.exists():
+        print(f"❌ Publish folder missing: {dataset_folder}")
+        return
+
+    print(f"📊 Generating summary for {slug}...")
+    
+    images = sorted([f for f in os.listdir(dataset_folder) if f.lower().endswith('.jpg')])
+    if not images:
+        print("No images found.")
+        return
+
+    # Basic Contact Sheet Logic (Simplified for reliability)
+    num_images = len(images)
+    cols = math.ceil(math.sqrt(num_images))
+    rows = math.ceil(num_images / cols)
+    
+    # Assuming 256px images + padding
+    thumb_size = 256
+    w = cols * (thumb_size + PADDING) + PADDING
+    h = rows * (thumb_size + PADDING + 40) + PADDING # +40 for text
+    
+    bg = Image.new('RGB', (w, h), (255, 255, 255))
+    draw = ImageDraw.Draw(bg)
+    
+    try:
+        font = ImageFont.load_default()
+    except: pass
+
+    for idx, img_file in enumerate(images):
+        r, c = divmod(idx, cols)
+        x = c * (thumb_size + PADDING) + PADDING
+        y = r * (thumb_size + PADDING + 40) + PADDING
+        
+        try:
+            im = Image.open(dataset_folder / img_file)
+            im.thumbnail((thumb_size, thumb_size))
+            bg.paste(im, (x, y))
+            
+            # Draw Caption snippet
+            txt_file = os.path.splitext(img_file)[0] + ".txt"
+            if (dataset_folder / txt_file).exists():
+                with open(dataset_folder / txt_file, "r") as f:
+                    cap = f.read(50) + "..." # First 50 chars
+                draw.text((x, y + thumb_size + 5), cap, fill=(0,0,0), font=font)
+        except Exception as e:
+            print(f"Error on {img_file}: {e}")
+
+    save_path = output_dir / f"{slug}_summary.jpg"
+    bg.save(save_path)
+    print(f"✅ Summary saved: {save_path}")
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        run(sys.argv[1])
     """
     Pipeline entry point - generates summary for the published dataset.
     Uses LOCAL 06_publish/256 folder (not Windows path).

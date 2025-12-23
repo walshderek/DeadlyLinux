@@ -1,8 +1,36 @@
 import sys
 import os
+import sys
+import os
+import re
+import torch
+from pathlib import Path
+
+# --- BOOTSTRAP PATHS ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+import utils
+
+# GPU check - warn but don't fail (WSL doesn't have direct GPU access)
+if not torch.cuda.is_available():
+    print("⚠️  WARNING: GPU not detected. Running on CPU (slow).")
+    print("   For GPU acceleration, run this pipeline in Windows PowerShell instead.")
+
+# Force localhost for WSL
+OLLAMA_HOST = "http://127.0.0.1:11434"
+os.environ["OLLAMA_HOST"] = OLLAMA_HOST
+os.environ["OLLAMA_MODELS"] = str(utils.MODEL_STORE_ROOT)
+
 import time
 import torch
-import re
+You are captioning images for AI training. The subject is "{trigger}".
+Rules:
+1. Start caption with "{trigger}".
+2. Describe clothing, background, pose, lighting, and style.
+3. DO NOT describe the face, eyes, or skin tone (the AI learns this from the pixels).
+4. Be concise. No lists.
+"""
 import importlib
 from pathlib import Path
 

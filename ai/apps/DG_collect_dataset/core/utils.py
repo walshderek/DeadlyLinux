@@ -170,17 +170,60 @@ def bootstrap(install_reqs=True):
 def slugify(text):
     return re.sub(r'[\W]+', '_', text.lower()).strip('_')
 
+import os
+import sys
+import json
+import shutil
+import random
+import string
+import subprocess
+from pathlib import Path
+
+# --- CONFIGURATION ---
+# Since this file is in /core/, parent is root, parent.parent is outside the project
+# logic: utils.py is in /core/. 
+# Path(__file__).parent is /core/
+# Path(__file__).parent.parent is /DG_collect_dataset/ (ROOT)
+MODEL_STORE_ROOT = Path("/mnt/c/AI/models")
+
+# Project Root (Assumed to be one level up from core/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Musubi Paths (Hardcoded based on your logs)
+MUSUBI_PATHS = {
+    'wsl_app': "/mnt/c/AI/apps/musubi-tuner",
+    'win_app': "C:/AI/apps/musubi-tuner",
+    'wsl_models': str(MODEL_STORE_ROOT),
+    'win_models': r"C:\AI\models"
+}
+
+# Standardized Directory Map (Paper Trail)
+DIRS = {
+    'scrape': "01_setup_scrape",
+    'crop': "02_crop",
+    'validate': "03_validate",
+    'clean': "04_clean",      # The standardized clean folder
+    'caption': "05_caption",  # The standardized caption folder
+    'publish': "06_publish",
+    'summary': "07_summary"
+}
+
+# --- CORE FUNCTIONS ---
+
 def gen_trigger(name):
     parts = name.split()
+
     first = parts[0].upper()[:2]
     last = parts[-1].upper()[0] if len(parts) > 1 else "X"
     return f"{first}{random.randint(100,999)}{last}"
+
 
 
 def obfuscate_trigger(name: str) -> str:
     """Create a leetspeak-ish trigger unlikely to collide with pretrained names."""
     subst = {
         'a': '4', 'b': '8', 'e': '3', 'g': '9', 'i': '1', 'l': '1', 'o': '0',
+
         's': '5', 't': '7', 'z': '2'
     }
     base = slugify(name).replace('_', '')
@@ -193,12 +236,14 @@ def obfuscate_trigger(name: str) -> str:
     return (obf + suffix).upper()
 
 
+
 def log_trigger_to_sheet(name: str, trigger: str, sheet_id: str = None, sheet_range: str = "Sheet1!A:C", client_secret: str = None, token_file: str = None):
     """Append trigger/name to Google Sheet. Best-effort; silently skips on missing deps/creds."""
     try:
         from googleapiclient.discovery import build
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
+
         from google.oauth2 import service_account
         from cryptography.fernet import Fernet
     except Exception:
@@ -209,11 +254,13 @@ def log_trigger_to_sheet(name: str, trigger: str, sheet_id: str = None, sheet_ra
     client_secret = client_secret or GOOGLE_CLIENT_SECRET
     token_file = token_file or GOOGLE_TOKEN_PATH
 
+
     token_path = Path(_normalize_path(str(token_file)))
     client_path = Path(_normalize_path(str(client_secret)))
     key_path = Path(_normalize_path(str(GOOGLE_KEY_PATH)))
 
     creds: Optional[object] = None
+
 
     # Try encrypted token pickle first
     if token_path.exists():

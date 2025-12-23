@@ -1,415 +1,33 @@
 import sys
 import os
 import shutil
-from PIL import Image, ImageOps
 from pathlib import Path
 
-# --- BOOTSTRAP PATHS ---
+# Bootstrap utils
 current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
+if current_dir not in sys.path: sys.path.append(current_dir)
 import utils
 
-# ================= CONFIGURATION =================
-TARGET_SIZE = 1024
-RESOLUTIONS = [512, 256]
-RESAMPLER = getattr(Image, "Resampling", Image).LANCZOS
+# --- CONFIG ---
+TARGET_RES = 256
+TEMPLATE_DIR = Path(current_dir) / "templates"
 
-# --- DESTINATIONS ---
-DEST_APP_ROOT = Path("/mnt/c/AI/apps/musubi-tuner")
-DEST_TOML_DIR = DEST_APP_ROOT / "files" / "tomls"
-DEST_DATASETS_ROOT = DEST_APP_ROOT / "files" / "datasets"
+def read_template(filename):
+    with open(TEMPLATE_DIR / filename, 'r') as f:
+        return f.read()
 
-# --- WINDOWS PATHS ---
-WIN_TOML_DIR_STR = r"C:\AI\apps\musubi-tuner\files\tomls"
-WIN_DATASETS_ROOT_STR = r"C:/AI/apps/musubi-tuner/files/datasets"
-
-# --- MODEL PATHS (LOCAL C:) ---
-PATH_T5 = r"C:\AI\models\clip\models_t5_umt5-xxl-enc-bf16.pth"
-PATH_VAE = r"C:\AI\models\vae\WAN\Wan2.1_VAE.pth"
-PATH_DIT_LOW = r"C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\fp16\wan2.2_t2v_low_noise_14B_fp16.safetensors"
-PATH_DIT_HIGH = r"C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\fp16\wan2.2_t2v_high_noise_14B_fp16.safetensors"
-
-def resize_pad_to_square(img_path, save_path, size):
-    try:
-        with Image.open(img_path) as img:
-            img = img.convert("RGB")
-            img = ImageOps.pad(img, (size, size), color=(0, 0, 0), centering=(0.5, 0.5))
-            img.save(save_path, quality=95)
-        return True
-    except: return False
-
-def generate_toml(local_windows_path, resolution):
-    # Match Shrek: cache_directory is the same as image_directory (no _cache subfolder)
-    return f"""[general]
+def generate_toml(clean_path_unc, resolution):
+    return f'''[general]
 caption_extension = ".txt"
 batch_size = 1
 enable_bucket = true
 bucket_no_upscale = false
 [[datasets]]
-image_directory = "{local_windows_path}"
-cache_directory = "{local_windows_path}"
+image_directory = "{clean_path_unc}"
+cache_directory = "{clean_path_unc}_cache"
 num_repeats = 1
 resolution = [{resolution},{resolution}]
-"""
-
-def generate_bat(slug, toml_path_win_c):
-    return f"""@echo off
-SETLOCAL enabledelayedexpansion
-
-REM --- PATHS ---
-set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
-set "OUT=%WAN_ROOT%\outputs\{slug}"
-    return f"""@echo off
-SETLOCAL enabledelayedexpansion
-
-REM --- PATHS ---
-set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
-set "CFG={toml_path_win_c}"
-
-REM --- OUTPUTS ---
-set "OUT=%WAN_ROOT%\outputs\{slug}"
-set "LOGDIR=%WAN_ROOT%\logs"
-set "OUTNAME={slug}"
-
-REM --- MODELS ---
-set "DIT_LOW={PATH_DIT_LOW}"
-set "DIT_HIGH={PATH_DIT_HIGH}"
-set "VAE={PATH_VAE}"
-set "T5={PATH_T5}"
-
-REM --- DEBUG: Print all paths
-echo WAN_ROOT: %WAN_ROOT%
-echo CFG: %CFG%
-echo OUT: %OUT%
-echo LOGDIR: %LOGDIR%
-echo DIT_LOW: %DIT_LOW%
-echo DIT_HIGH: %DIT_HIGH%
-echo VAE: %VAE%
-echo T5: %T5%
-
-REM --- EXECUTION ---
-cd /d "%WAN_ROOT%"
-call .\venv\Scripts\activate.bat
-
-if not exist %OUT% mkdir %OUT%
-if not exist %LOGDIR% mkdir %LOGDIR%
-
-echo Starting VAE Latent Cache...
-python wan_cache_latents.py --dataset_config "%CFG%" --vae "%VAE%" --vae_dtype float16
-
-echo Starting T5 Cache...
-python wan_cache_text_encoder_outputs.py --dataset_config "%CFG%" --t5 "%T5%" --batch_size 16 --fp8_t5
-
-echo Starting Training...
-python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
-    --dataset_config "%CFG%" ^
-    --discrete_flow_shift 3 ^
-    --dit "%DIT_LOW%" ^
-    --dit_high_noise "%DIT_HIGH%" ^
-    --fp8_base ^
-    --fp8_scaled ^
-    --fp8_t5 ^
-    --gradient_accumulation_steps 1 ^
-    --gradient_checkpointing ^
-    --img_in_txt_in_offloading ^
-    --learning_rate 0.00001 ^
-    --max_grad_norm 1.0 ^
-    --logging_dir "%LOGDIR%" ^
-    --lr_scheduler cosine ^
-    --lr_warmup_steps 200 ^
-    --max_data_loader_n_workers 2 ^
-    --max_train_epochs 35 ^
-    --save_every_n_epochs 5 ^
-    --seed 42 ^
-    --t5 "%T5%" ^
-    --task t2v-A14B ^
-    --timestep_boundary 875 ^
-    --timestep_sampling logsnr ^
-    --vae "%VAE%" ^
-    --vae_cache_cpu ^
-    --vae_dtype bfloat16 ^
-    --network_module networks.lora_wan ^
-    --network_dim 16 ^
-    --network_alpha 16 ^
-    --mixed_precision bf16 ^
-    --blocks_to_swap 24 ^
-    --optimizer_type AdamW8bit ^
-    --sdpa
-
-
-ENDLOCAL
-"""
-REM --- MODELS ---
-set "DIT_LOW={PATH_DIT_LOW}"
-set "DIT_HIGH={PATH_DIT_HIGH}"
-set "VAE={PATH_VAE}"
-set "T5={PATH_T5}"
-
-REM --- DEBUG: Print all paths
-echo WAN_ROOT: %WAN_ROOT%
-echo CFG: %CFG%
-echo OUT: %OUT%
-echo LOGDIR: %LOGDIR%
-echo DIT_LOW: %DIT_LOW%
-echo DIT_HIGH: %DIT_HIGH%
-echo VAE: %VAE%
-echo T5: %T5%
-
-REM --- EXECUTION ---
-cd /d "%WAN_ROOT%"
-call ".\venv\Scripts\activate.bat"
-
-    --dit "%DIT_LOW%" ^
-    --fp8_scaled ^
-    return f"""@echo off
-SETLOCAL enabledelayedexpansion
-
-REM --- PATHS ---
-set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
-set "CFG={toml_path_win_c}"
-
-REM --- OUTPUTS ---
-set "OUT=%WAN_ROOT%\outputs\{slug}"
-set "LOGDIR=%WAN_ROOT%\logs"
-set "OUTNAME={slug}"
-
-REM --- MODELS ---
-set "DIT_LOW={PATH_DIT_LOW}"
-set "DIT_HIGH={PATH_DIT_HIGH}"
-set "VAE={PATH_VAE}"
-set "T5={PATH_T5}"
-
-REM --- DEBUG: Print all paths
-echo WAN_ROOT: %WAN_ROOT%
-echo CFG: %CFG%
-echo OUT: %OUT%
-echo LOGDIR: %LOGDIR%
-echo DIT_LOW: %DIT_LOW%
-echo DIT_HIGH: %DIT_HIGH%
-echo VAE: %VAE%
-echo T5: %T5%
-
-REM --- EXECUTION ---
-cd /d "%WAN_ROOT%"
-call ".\venv\Scripts\activate.bat"
-
-ENDLOCAL
-    return f"""@echo off
-SETLOCAL enabledelayedexpansion
-
-REM --- PATHS ---
-set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
-set "CFG={toml_path_win_c}"
-
-REM --- OUTPUTS ---
-set "OUT=%WAN_ROOT%\outputs\{slug}"
-set "LOGDIR=%WAN_ROOT%\logs"
-set "OUTNAME={slug}"
-
-REM --- MODELS ---
-set "DIT_LOW={PATH_DIT_LOW}"
-set "DIT_HIGH={PATH_DIT_HIGH}"
-set "VAE={PATH_VAE}"
-set "T5={PATH_T5}"
-
-REM --- DEBUG: Print all paths
-echo WAN_ROOT: %WAN_ROOT%
-echo CFG: %CFG%
-echo OUT: %OUT%
-echo LOGDIR: %LOGDIR%
-echo DIT_LOW: %DIT_LOW%
-echo DIT_HIGH: %DIT_HIGH%
-echo VAE: %VAE%
-echo T5: %T5%
-
-REM --- EXECUTION ---
-cd /d "%WAN_ROOT%"
-call ".\venv\Scripts\activate.bat"
-
-
-    return f"""@echo off
-SETLOCAL enabledelayedexpansion
-
-REM --- PATHS ---
-set "WAN_ROOT={utils.MUSUBI_PATHS['win_app']}"
-set "CFG={toml_path_win_c}"
-
-REM --- OUTPUTS ---
-set "OUT=%WAN_ROOT%\outputs\{slug}"
-set "LOGDIR=%WAN_ROOT%\logs"
-set "OUTNAME={slug}"
-
-REM --- MODELS ---
-set "DIT_LOW={PATH_DIT_LOW}"
-set "DIT_HIGH={PATH_DIT_HIGH}"
-set "VAE={PATH_VAE}"
-set "T5={PATH_T5}"
-
-REM --- DEBUG: Print all paths
-echo WAN_ROOT: %WAN_ROOT%
-echo CFG: %CFG%
-echo OUT: %OUT%
-echo LOGDIR: %LOGDIR%
-echo DIT_LOW: %DIT_LOW%
-echo DIT_HIGH: %DIT_HIGH%
-echo VAE: %VAE%
-echo T5: %T5%
-
-REM --- EXECUTION ---
-cd /d "%WAN_ROOT%"
-call ".\venv\Scripts\activate.bat"
-
-if not exist %OUT% mkdir %OUT%
-if not exist %LOGDIR% mkdir %LOGDIR%
-
-echo Starting VAE Latent Cache...
-python wan_cache_latents.py --dataset_config "%CFG%" --vae "%VAE%" --vae_dtype float16
-
-echo Starting T5 Cache...
-python wan_cache_text_encoder_outputs.py --dataset_config "%CFG%" --t5 "%T5%" --batch_size 16 --fp8_t5
-
-echo Starting Training...
-python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
-    --dataset_config "%CFG%" ^
-    --discrete_flow_shift 3 ^
-    --dit "%DIT_LOW%" ^
-    --dit_high_noise "%DIT_HIGH%" ^
-    --fp8_base ^
-    --fp8_scaled ^
-    --fp8_t5 ^
-    --gradient_accumulation_steps 1 ^
-    --gradient_checkpointing ^
-    --img_in_txt_in_offloading ^
-    --learning_rate 0.00001 ^
-    --max_grad_norm 1.0 ^
-    --logging_dir "%LOGDIR%" ^
-    --lr_scheduler cosine ^
-    --lr_warmup_steps 200 ^
-    --max_data_loader_n_workers 2 ^
-    --max_train_epochs 35 ^
-    --save_every_n_epochs 5 ^
-    --seed 42 ^
-    --t5 "%T5%" ^
-    --task t2v-A14B ^
-    --timestep_boundary 875 ^
-    --timestep_sampling logsnr ^
-    --vae "%VAE%" ^
-    --vae_cache_cpu ^
-    --vae_dtype bfloat16 ^
-    --network_module networks.lora_wan ^
-    --network_dim 16 ^
-    --network_alpha 16 ^
-    --mixed_precision bf16 ^
-    --blocks_to_swap 24 ^
-    --optimizer_type AdamW8bit ^
-    --sdpa
-
-
-ENDLOCAL
-"""
-echo Starting Training...
-venv\Scripts\accelerate.exe launch --num_processes 1 "wan_train_network.py" ^
-    --dataset_config "%CFG%" ^
-    --discrete_flow_shift 3 ^
-    --dit "%DIT_LOW%" ^
-    --dit_high_noise "%DIT_HIGH%" ^
-    --fp8_base ^
-    --fp8_scaled ^
-    --fp8_t5 ^
-    --gradient_accumulation_steps 1 ^
-    --gradient_checkpointing ^
-    --img_in_txt_in_offloading ^
-    --learning_rate 0.00001 ^
-    --logging_dir "%LOGDIR%" ^
-    --lr_scheduler cosine ^
-    --lr_warmup_steps 100 ^
-    --max_data_loader_n_workers 6 ^
-    --max_train_epochs 35 ^
-    --save_every_n_epochs 5 ^
-    --seed 42 ^
-    --t5 "%T5%" ^
-    --task t2v-A14B ^
-    --timestep_boundary 875 ^
-    --timestep_sampling logsnr ^
-    --vae "%VAE%" ^
-    --vae_cache_cpu ^
-    --vae_dtype float16 ^
-    --network_module networks.lora_wan ^
-    --network_dim 16 ^
-    --network_alpha 16 ^
-    --mixed_precision fp16 ^
-    --min_timestep 0 ^
-    --max_timestep 1000 ^
-    --offload_inactive_dit ^
-    --optimizer_type AdamW8bit ^
-    --sdpa
-
-
-ENDLOCAL
-"""
-
-def generate_sh(slug, toml_path_linux):
-        return f"""#!/usr/bin/env bash
-set -euo pipefail
-
-WAN_ROOT=\"{utils.MUSUBI_PATHS['wsl_app']}\"
-CFG=\"{toml_path_linux}\"
-
-OUT=\"${{WAN_ROOT}}/outputs/{slug}\"
-LOGDIR=\"${{WAN_ROOT}}/logs\"
-
-DIT_LOW=\"{PATH_DIT_LOW}\"
-DIT_HIGH=\"{PATH_DIT_HIGH}\"
-VAE=\"{PATH_VAE}\"
-T5=\"{PATH_T5}\"
-
-cd \"${{WAN_ROOT}}\"
-source venv/bin/activate
-
-mkdir -p \"${{OUT}}\" \"${{LOGDIR}}\"
-
-python wan_cache_latents.py --dataset_config \"${{CFG}}\" --vae \"${{VAE}}\" --vae_dtype float16
-
-python wan_cache_text_encoder_outputs.py --dataset_config \"${{CFG}}\" --t5 \"${{T5}}\" --batch_size 16 --fp8_t5
-
-accelerate launch --num_processes 1 \\
-    wan_train_network.py \\
-    --dataset_config \"${{CFG}}\" \\
-    --discrete_flow_shift 3 \\
-    --dit \"${{DIT_LOW}}\" \\
-    --dit_high_noise \"${{DIT_HIGH}}\" \\
-    --fp8_base \\
-    --fp8_scaled \\
-    --fp8_t5 \\
-    --gradient_accumulation_steps 1 \\
-    --gradient_checkpointing \\
-    --img_in_txt_in_offloading \\
-    --learning_rate 0.00001 \\
-    --logging_dir \"${{LOGDIR}}\" \\
-    --lr_scheduler cosine \\
-    --lr_warmup_steps 100 \\
-    --max_data_loader_n_workers 6 \\
-    --max_train_epochs 35 \\
-    --save_every_n_epochs 5 \\
-    --seed 42 \\
-    --t5 \"${{T5}}\" \\
-    --task t2v-A14B \\
-    --timestep_boundary 875 \\
-    --timestep_sampling logsnr \\
-    --vae \"${{VAE}}\" \\
-    --vae_cache_cpu \\
-    --vae_dtype float16 \\
-    --network_module networks.lora_wan \\
-    --network_dim 16 \\
-    --network_alpha 16 \\
-    --mixed_precision fp16 \\
-    --min_timestep 0 \\
-    --max_timestep 1000 \\
-    --offload_inactive_dit \\
-    --optimizer_type AdamW8bit \\
-    --sdpa
-"""
+'''
 
 def run(slug):
     print(f"=== PUBLISHING {slug} ===")
@@ -418,126 +36,125 @@ def run(slug):
     
     path = utils.get_project_path(slug)
     
-    # --- PAPER TRAIL ARCHITECTURE (Section XIX) ---
-    # INPUT: 05_caption (images + .txt captions from captioning stage)
-    # Fallback chain: 05_caption -> 04_clean -> 03_validate
-    
+    # 1. Source Selection (Paper Trail)
     caption_dir = path / utils.DIRS.get('caption', '05_caption')
     clean_dir = path / utils.DIRS.get('clean', '04_clean')
-    validate_dir = path / utils.DIRS.get('validate', '03_validate')
     
-    # Try 05_caption first (Paper Trail standard)
-    if caption_dir.exists():
-        in_dir = caption_dir
-        print(f"📂 [06_publish] Using Paper Trail source: {in_dir}")
+    if caption_dir.exists() and os.listdir(caption_dir):
+        src_dir = caption_dir
     elif clean_dir.exists():
-        in_dir = clean_dir
-        print(f"⚠️  [06_publish] Fallback to 04_clean (no 05_caption): {in_dir}")
-    elif validate_dir.exists():
-        in_dir = validate_dir
-        print(f"⚠️  [06_publish] Fallback to 03_validate: {in_dir}")
+        src_dir = clean_dir
+        print("⚠️  Warning: Using uncaptioned images (04_clean)")
     else:
-        print(f"❌ ERROR: No images found in any stage folder.")
+        print("❌ Error: No images found.")
         return
 
-    # 2. Local WSL Output
+    # 2. Prepare Directories
     publish_root = path / utils.DIRS.get('publish', '06_publish')
+    publish_res = publish_root / "256"
+    
     if publish_root.exists(): shutil.rmtree(publish_root)
-    publish_root.mkdir(parents=True, exist_ok=True)
-
-    # 3. Windows Destination
-    dest_dataset_dir = DEST_DATASETS_ROOT / slug
+    publish_res.mkdir(parents=True, exist_ok=True)
+    
+    # Musubi Destination (WSL Path)
+    musubi_root_wsl = Path(utils.MUSUBI_PATHS['wsl_app'])
+    dest_dataset_dir = musubi_root_wsl / "files" / "datasets" / slug / "256"
+    
+    # 3. Copy Images
+    print(f"📂 Copying to {dest_dataset_dir}...")
     if dest_dataset_dir.exists(): shutil.rmtree(dest_dataset_dir)
     dest_dataset_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"📂 Processing images from: {in_dir}")
-    print(f"🚀 Publishing to Windows: {dest_dataset_dir}")
-
-    files = sorted([f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png'))])
     
-    # 4. Generate Images & Copy
-    res_dir_1024 = publish_root / "1024"
-    res_dir_1024.mkdir(exist_ok=True)
-    res_dir_256 = publish_root / "256"
-    res_dir_256.mkdir(exist_ok=True)
-    
-    TARGET_RES = 256
-    
-    # Create 256 subfolder in Windows destination
-    dest_256_dir = dest_dataset_dir / "256"
-    dest_256_dir.mkdir(parents=True, exist_ok=True)
-    
+    files = [f for f in os.listdir(src_dir) if f.lower().endswith(('.jpg', '.png'))]
     for f in files:
-        if resize_pad_to_square(in_dir / f, res_dir_1024 / f, TARGET_SIZE):
-            txt = os.path.splitext(f)[0] + ".txt"
-            if (in_dir / txt).exists():
-                shutil.copy(in_dir / txt, res_dir_1024 / txt)
+        # Copy to local publish folder
+        shutil.copy2(src_dir / f, publish_res / f)
+        # Copy to Musubi folder
+        shutil.copy2(src_dir / f, dest_dataset_dir / f)
         
-        for res in RESOLUTIONS:
-            if res == 256:
-                res_dir = publish_root / str(res)
-                res_dir.mkdir(exist_ok=True)
-                img = Image.open(res_dir_1024 / f)
-                img.resize((res, res), RESAMPLER).save(res_dir / f)
-                img.resize((res, res), RESAMPLER).save(dest_256_dir / f)
-                if (in_dir / txt).exists():
-                    shutil.copy(in_dir / txt, res_dir / txt)
-                    shutil.copy(in_dir / txt, dest_256_dir / txt)
+        # Handle captions
+        txt = os.path.splitext(f)[0] + ".txt"
+        if (src_dir / txt).exists():
+            shutil.copy2(src_dir / txt, publish_res / txt)
+            shutil.copy2(src_dir / txt, dest_dataset_dir / txt)
 
-    # 5. Generate Configs
-    win_dataset_path = f"{WIN_DATASETS_ROOT_STR}/{slug}/256"
-    linux_dataset_path = f"/home/seanf/deadlygraphics/ai/apps/musubi-tuner/files/datasets/{slug}/256"
-    res_str = "256"
+    # 4. Generate TOMLs
+    # Windows path for the BAT file execution
+    win_dataset_path = f"{utils.MUSUBI_PATHS['win_app']}/files/datasets/{slug}/256"
+    # Linux path for the SH file execution
+    linux_dataset_path = f"{utils.MUSUBI_PATHS['wsl_app']}/files/datasets/{slug}/256"
+    
+    toml_win = generate_toml(win_dataset_path, TARGET_RES)
+    toml_linux = generate_toml(linux_dataset_path, TARGET_RES)
+    
+    toml_dir = musubi_root_wsl / "files" / "tomls"
+    toml_dir.mkdir(parents=True, exist_ok=True)
+    
+    with open(toml_dir / f"{slug}_win.toml", "w") as f: f.write(toml_win)
+    with open(toml_dir / f"{slug}_linux.toml", "w") as f: f.write(toml_linux)
 
-    toml_name_win = f"{slug}_{res_str}_win.toml"
-    toml_name_linux = f"{slug}_{res_str}_linux.toml"
-    bat_name = f"train_{slug}_{res_str}.bat"
-    sh_name = f"train_{slug}_{res_str}.sh"
+    # 5. Fill Templates
+    replacements = {
+        "@WAN@": utils.MUSUBI_PATHS['win_app'], # For BAT
+        "@WAN_WSL@": utils.MUSUBI_PATHS['wsl_app'], # For SH
+        "@CFG@": f"{utils.MUSUBI_PATHS['win_app']}\\files\\tomls\\{slug}_win.toml",
+        "@CFG_WSL@": f"{utils.MUSUBI_PATHS['wsl_app']}/files/tomls/{slug}_linux.toml",
+        "@OUT@": f"{utils.MUSUBI_PATHS['win_app']}\\outputs\\{slug}",
+        "@OUT_WSL@": f"{utils.MUSUBI_PATHS['wsl_app']}/outputs/{slug}",
+        "@OUTNAME@": slug,
+        "@LOGDIR@": f"{utils.MUSUBI_PATHS['win_app']}\\logs",
+        "@LOGDIR_WSL@": f"{utils.MUSUBI_PATHS['wsl_app']}/logs",
+        "@DIT_LOW@": f"{utils.MUSUBI_PATHS['win_models']}\\diffusion-models\\Wan\\Wan2.2\\14B\\Wan_2_2_I2V\\fp16\\wan2.2_t2v_low_noise_14B_fp16.safetensors",
+        "@DIT_HIGH@": f"{utils.MUSUBI_PATHS['win_models']}\\diffusion-models\\Wan\\Wan2.2\\14B\\Wan_2_2_I2V\\fp16\\wan2.2_t2v_high_noise_14B_fp16.safetensors",
+        "@VAE@": f"{utils.MUSUBI_PATHS['win_models']}\\vae\\wan_2.1_vae.pth",
+        "@T5@": f"{utils.MUSUBI_PATHS['win_models']}\\clip\\models_t5_umt5-xxl-enc-bf16.pth",
+        # Hyperparams
+        "@GRAD_ACCUM@": "1",
+        "@LEARNING_RATE@": "0.0001",
+        "@N_WORKERS@": "8",
+        "@EPOCHS@": "35",
+        "@NETWORK_ALPHA@": "16",
+        "@NETWORK_DIM@": "16"
+    }
+    
+    # WSL Specific replacements for the .sh file
+    replacements_sh = replacements.copy()
+    replacements_sh["@WAN@"] = utils.MUSUBI_PATHS['wsl_app']
+    replacements_sh["@CFG@"] = replacements["@CFG_WSL@"]
+    replacements_sh["@OUT@"] = replacements["@OUT_WSL@"]
+    replacements_sh["@LOGDIR@"] = replacements["@LOGDIR_WSL@"]
+    # Convert Win paths to WSL paths for models
+    for key in ["@DIT_LOW@", "@DIT_HIGH@", "@VAE@", "@T5@"]:
+        replacements_sh[key] = replacements_sh[key].replace(utils.MUSUBI_PATHS['win_models'], utils.MUSUBI_PATHS['wsl_models']).replace("\\", "/")
 
-    toml_content_win = generate_toml(win_dataset_path, TARGET_RES)
-    toml_content_linux = generate_toml(linux_dataset_path, TARGET_RES)
-    bat_content = generate_bat(slug, f"{WIN_TOML_DIR_STR}\{toml_name_win}")
-    sh_content = generate_sh(slug, f"/home/seanf/deadlygraphics/ai/apps/musubi-tuner/files/tomls/{toml_name_linux}")
+    # Generate BAT
+    bat_content = read_template("train_template.bat")
+    for k, v in replacements.items():
+        bat_content = bat_content.replace(k, v)
+    
+    # Generate SH
+    sh_content = read_template("train_template.sh")
+    for k, v in replacements_sh.items():
+        sh_content = sh_content.replace(k, v)
 
-    # 6. Deploy to Musubi app (Windows)
-    DEST_TOML_DIR.mkdir(parents=True, exist_ok=True)
-    with open(DEST_TOML_DIR / toml_name_win, "w") as f:
-        f.write(toml_content_win)
-    with open(DEST_APP_ROOT / bat_name, "w") as f:
-        f.write(bat_content)
+    # Write Scripts
+    with open(musubi_root_wsl / f"train_{slug}.bat", "w") as f: f.write(bat_content)
+    with open(musubi_root_wsl / f"train_{slug}.sh", "w") as f: f.write(sh_content)
+    os.chmod(musubi_root_wsl / f"train_{slug}.sh", 0o755)
 
-    # 6b. Deploy to Musubi app (Linux/WSL)
-    linux_toml_dir = Path("/home/seanf/deadlygraphics/ai/apps/musubi-tuner/files/tomls")
-    linux_toml_dir.mkdir(parents=True, exist_ok=True)
-    with open(linux_toml_dir / toml_name_linux, "w") as f:
-        f.write(toml_content_linux)
-    # Move .sh to /home/seanf/deadlygraphics/ai/apps/musubi-tuner/
-    linux_app_root = Path("/home/seanf/deadlygraphics/ai/apps/musubi-tuner")
-    with open(linux_app_root / sh_name, "w") as f:
-        f.write(sh_content)
-    os.chmod(linux_app_root / sh_name, 0o755)
+    # Backup to publish folder
+    with open(publish_root / f"train_{slug}.bat", "w") as f: f.write(bat_content)
+    with open(publish_root / f"train_{slug}.sh", "w") as f: f.write(sh_content)
+    
+    # Log Trigger
+    trigger = config.get('trigger', '')
+    with open(publish_root / "trigger.txt", "w") as f: f.write(trigger)
+    utils.log_trigger_to_sheet(slug, trigger)
+    
+    print(f"✅ Published! Run training with:")
+    print(f"   Windows: {utils.MUSUBI_PATHS['win_app']}\\train_{slug}.bat")
+    print(f"   WSL:     {utils.MUSUBI_PATHS['wsl_app']}/train_{slug}.sh")
 
-    # 7. Also drop copies in publish folder alongside trigger
-    with open(publish_root / toml_name_win, "w") as f:
-        f.write(toml_content_win)
-    with open(publish_root / toml_name_linux, "w") as f:
-        f.write(toml_content_linux)
-    with open(publish_root / bat_name, "w") as f:
-        f.write(bat_content)
-    with open(publish_root / sh_name, "w") as f:
-        f.write(sh_content)
-    os.chmod(publish_root / sh_name, 0o755)
-
-    # 8. Save trigger word in publish folder
-    trigger_txt = publish_root / "trigger.txt"
-    with open(trigger_txt, "w") as f:
-        f.write(str(config.get('trigger', '')).strip())
-
-    # 9. Log to Google Sheet (best-effort)
-    utils.log_trigger_to_sheet(
-        name=config.get('name', slug),
-        trigger=config.get('trigger', ''),
-    )
-
-    print(f"✅ Images copied to: {dest_dataset_dir}")
-    print(f"✅ Configs deployed to Musubi app and mirrored in publish folder.")
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        run(sys.argv[1])

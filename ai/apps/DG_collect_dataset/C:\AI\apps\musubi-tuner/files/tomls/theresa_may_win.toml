@@ -1,0 +1,22 @@
+# Musubi Tuner Dataset Config Template
+# Fill in the variables as needed for your batch or script
+
+[general]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = false
+
+[[datasets]]
+image_directory = "C:/AI/apps/musubi-tuner/files/datasets/theresa_may/256"
+cache_directory = "C:/AI/apps/musubi-tuner/files/datasets/theresa_may/256/cache"
+num_repeats = 1
+resolution = [256, 256]
+
+[training]
+learning_rate = 0.0001
+network_alpha = 128
+network_dim = 128
+max_data_loader_n_workers = 4
+max_train_epochs = 10
+gradient_accumulation_steps = 1

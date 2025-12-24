@@ -4,28 +4,23 @@ setlocal enabledelayedexpansion
 :: --- PATH CONFIGURATION ---
 set "WAN_ROOT=C:\AI\apps\musubi-tuner"
 set "CFG=C:\AI\apps\musubi-tuner\files\tomls\michael_gove_256_win.toml"
-set "DIT_LOW=C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\fp16\wan2.2_t2v_low_noise_14B_fp16.safetensors"
-set "DIT_HIGH=C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\fp16\wan2.2_t2v_high_noise_14B_fp16.safetensors"
+set "DIT_LOW=C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\bf16\Wan-2.2-T2V-Low-Noise-BF16.safetensors"
+set "DIT_HIGH=C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\bf16\Wan-2.2-T2V-High-Noise-BF16.safetensors"
 set "VAE=C:\AI\models\vae\WAN\Wan2.1_VAE.pth"
 set "T5=C:\AI\models\clip\models_t5_umt5-xxl-enc-bf16.pth"
-set "OUT=%WAN_ROOT%\outputs\michael_gove"
-set "OUTNAME=michael_gove"
-set "LOGDIR=%WAN_ROOT%\logs"
+set "OUT=C:\AI\apps\musubi-tuner\outputs\michael_gove_256"
+set "OUTNAME=michael_gove_256"
+set "LOGDIR=C:\AI\apps\musubi-tuner\logs"
 
 :: --- ENVIRONMENT ACTIVATION ---
 cd /d "%WAN_ROOT%"
 call ".\venv\Scripts\activate.bat"
 
-if not exist %OUT% mkdir %OUT%
-if not exist %LOGDIR% mkdir %LOGDIR%
+:: --- MEMORY OPTIMIZATION ---
+set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-echo Starting VAE Latent Cache...
-python wan_cache_latents.py --dataset_config "%CFG%" --vae "%VAE%" --vae_dtype float16
-
-echo Starting T5 Cache...
-python wan_cache_text_encoder_outputs.py --dataset_config "%CFG%" --t5 "%T5%" --batch_size 16 --fp8_t5
-
-echo Starting Training...
+:: --- EXECUTION (Single-Model Block Swap Protocol) ---
+:: Removed --offload_inactive_dit to allow --blocks_to_swap to function.
 python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
     --dataset_config "%CFG%" ^
     --discrete_flow_shift 3 ^
@@ -37,12 +32,26 @@ python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
     --gradient_accumulation_steps 1 ^
     --gradient_checkpointing ^
     --img_in_txt_in_offloading ^
-    --learning_rate 0.00001 ^
+    --learning_rate 0.0001 ^
+    --max_grad_norm 1.0 ^
+    --log_with tensorboard ^
     --logging_dir "%LOGDIR%" ^
     --lr_scheduler cosine ^
-    --lr_warmup_steps 100 ^
-    --max_data_loader_n_workers 6 ^
+    --lr_warmup_steps 200 ^
+    --max_data_loader_n_workers 2 ^
+    --max_timestep 1000 ^
     --max_train_epochs 35 ^
+    --min_timestep 0 ^
+    --mixed_precision bf16 ^
+    --network_alpha 8 ^
+    --network_args "verbose=True" "exclude_patterns=[]" ^
+    --network_dim 8 ^
+    --network_module networks.lora_wan ^
+    --blocks_to_swap 24 ^
+    --optimizer_type AdamW8bit ^
+    --output_dir "%OUT%" ^
+    --output_name "%OUTNAME%" ^
+    --persistent_data_loader_workers ^
     --save_every_n_epochs 5 ^
     --seed 42 ^
     --t5 "%T5%" ^
@@ -51,15 +60,10 @@ python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
     --timestep_sampling logsnr ^
     --vae "%VAE%" ^
     --vae_cache_cpu ^
-    --vae_dtype float16 ^
-    --network_module networks.lora_wan ^
-    --network_dim 16 ^
-    --network_alpha 16 ^
-    --mixed_precision fp16 ^
-    --min_timestep 0 ^
-    --max_timestep 1000 ^
-    --offload_inactive_dit ^
-    --optimizer_type AdamW8bit ^
+    --vae_dtype bfloat16 ^
     --sdpa
 
-endlocal
+pause
+    --timestep_boundary 875 ^
+
+    --timestep_sampling logsnr ^

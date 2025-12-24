@@ -1,206 +1,111 @@
 import sys
 import os
-import sys
-import os
 import re
 import torch
+import csv
+import shutil
 from pathlib import Path
-
-# --- BOOTSTRAP PATHS ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
+from qwen_vl_utils import process_vision_info
+from tqdm import tqdm
 import utils
 
-# GPU check - warn but don't fail (WSL doesn't have direct GPU access)
-if not torch.cuda.is_available():
-    print("⚠️  WARNING: GPU not detected. Running on CPU (slow).")
-    print("   For GPU acceleration, run this pipeline in Windows PowerShell instead.")
-
-# Force localhost for WSL
-OLLAMA_HOST = "http://127.0.0.1:11434"
-os.environ["OLLAMA_HOST"] = OLLAMA_HOST
-os.environ["OLLAMA_MODELS"] = str(utils.MODEL_STORE_ROOT)
-
-import time
-import torch
-You are captioning images for AI training. The subject is "{trigger}".
-Rules:
-1. Start caption with "{trigger}".
-2. Describe clothing, background, pose, lighting, and style.
-3. DO NOT describe the face, eyes, or skin tone (the AI learns this from the pixels).
-4. Be concise. No lists.
-"""
-import importlib
-from pathlib import Path
-
-# --- BOOTSTRAP PATHS ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-import utils
-
-# GPU check - warn but don't fail (WSL doesn't have direct GPU access)
-if not torch.cuda.is_available():
-    print("⚠️  WARNING: GPU not detected. Running on CPU (slow).")
-    print("   For GPU acceleration, run this pipeline in Windows PowerShell instead.")
-
-# Force localhost for WSL
-OLLAMA_HOST = "http://127.0.0.1:11434"
-os.environ["OLLAMA_HOST"] = OLLAMA_HOST
-os.environ["OLLAMA_MODELS"] = str(utils.MODEL_STORE_ROOT)
-
-def get_system_instruction(trigger, real_name):
+def get_whisper_prompt(trigger, real_name):
+    """Pass 1: Environmental description only."""
     return f"""
-You are captioning images for fine-tuning. The subject's secret trigger is "{trigger}" which refers to {real_name}.
-
+Analyze this photo of {real_name} (trigger: {trigger}).
 Ground rules:
-- START the caption with "{trigger}".
-- DO NOT describe the subject's intrinsic appearance (face, head shape, skin tone, hair, eyes, age, build, lips, nose, ears, cheeks, jaw).
-- Focus on everything else: clothing, accessories, pose, hands, body orientation, background, setting, props, lighting, camera angle, depth of field, mood.
-- No Markdown or lists; single concise sentence(s).
-- Avoid phrases like "photo of" or "image of".
+- Start with the word "{trigger}".
+- Describe only clothing, pose, background, setting, and camera angle.
+- DO NOT describe the subject's face, eyes, hair, or skin.
+- Format: One concise sentence.
+"""
 
-Examples of allowed details: "{trigger} wearing a navy suit and red tie, standing at a podium with blurred flags behind, rim-lit from stage lights, shot at medium close-up, f/2.8 shallow depth of field."
+def get_photofit_prompt(trigger):
+    """Pass 2: Identity 'Inversese' (Clinical Physical Profiling)."""
+    return f"""
+Analyze subject "{trigger}". Provide a physical description of ONLY the person.
+Include: haircut/thickness, facial expression, estimated age, skin tone, build, and eye shape.
+Note if they are wearing glasses or jewelry.
+Format: Single objective paragraph.
 """
 
 def clean_caption(text, trigger):
-    # 1. Kill the specific bad phrases if Qwen ignores us
-    text = re.sub(r"(?i)^(the image features|the image shows|a photo of|an image of)\s*", "", text.strip())
-    # 2. Remove Markdown bolding/italics
-    text = text.replace("**", "").replace("*", "")
-    # 3. Clean whitespace
-    text = text.strip(" ,.:")
-    # 4. Ensure it starts with trigger
+    text = re.sub(r"(?i)^(the image features|photo of|an image of)\s*", "", text.strip())
+    text = text.replace("**", "").replace("*", "").strip(" ,.:")
     if not text.lower().startswith(trigger.lower()):
         text = f"{trigger}, {text}"
     return text
 
 def run(slug):
     config = utils.load_config(slug)
-    if not config: return
-    
-    trigger = config['trigger']
-    model = config.get('model', 'qwen-vl')
+    trigger = config.get('trigger', 'Scottington')
     real_name = config.get('name', slug)
-    gender_str = 'person'
-
     path = utils.get_project_path(slug)
     
-    # --- PAPER TRAIL ARCHITECTURE (Section XIX) ---
-    # INPUT:  04_clean (cleaned images, no captions)
-    # OUTPUT: 05_caption (images COPIED here + .txt captions generated)
-    
-    in_dir = path / utils.DIRS.get('clean', '04_clean')
-    
-    if not in_dir.exists():
-        print(f"⚠️ '{in_dir.name}' not found. Checking validation folder...")
-        in_dir = path / utils.DIRS.get('validate', '03_validate')
-    
-    if not in_dir.exists():
-        print(f"❌ Error: No input images found in {path}")
-        return
-
-    # Create output directory for captioned images (05_caption)
-    out_dir = path / utils.DIRS.get('caption', '05_caption')
+    in_dir = path / "04_clean"
+    out_dir = path / "05_caption"
+    char_dir = path / "characterDesc"
     out_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"📝 [05_caption] Paper Trail Architecture")
-    print(f"   INPUT:  {in_dir}")
-    print(f"   OUTPUT: {out_dir}")
-    
-    # Qwen Setup (4-bit Turbo)
-    if model == "qwen-vl":
-        try:
-            print("⏳ Loading Qwen2.5-VL...")
-            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
-            
-            qwen_path = utils.MODEL_STORE_ROOT / "QWEN" / "Qwen2.5-VL-3B-Instruct"
-            
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_quant_type="nf4"
-            )
-            
-            qwen_model_obj = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                str(qwen_path),
-                quantization_config=bnb_config,
-                device_map="auto",
-            )
-            qwen_processor = AutoProcessor.from_pretrained(str(qwen_path))
-        except Exception as e:
-            print(f"❌ Failed to load Qwen: {e}")
-            return
-    else:
-        # Fallback setup if needed
-        pass
+    char_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"📝 [05_caption] GPU Dual-Pass Engine for: {real_name}")
+    qwen_path = "/mnt/c/AI/models/LLM/Qwen2.5-VL-3B-Instruct"
+
+    # RTX 4080 SUPER Optimization
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4"
+    )
+
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        qwen_path, quantization_config=bnb_config, device_map="auto"
+    )
+    processor = AutoProcessor.from_pretrained(qwen_path)
 
     files = sorted([f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png'))])
-    system_instruction = get_system_instruction(trigger, real_name)
+    photofit_logs = []
+
+    def quick_infer(img_path, instruction):
+        messages = [{"role": "user", "content": [{"type": "image", "image": str(img_path), "max_pixels": 768*768}, {"type": "text", "text": instruction}]}]
+        text_input = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        image_inputs, _ = process_vision_info(messages)
+        inputs = processor(text=[text_input], images=image_inputs, padding=True, return_tensors="pt").to(model.device)
+        generated_ids = model.generate(**inputs, max_new_tokens=128)
+        return processor.batch_decode(generated_ids[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0].strip()
+
+    for f in tqdm(files, desc="Processing Identity"):
+        # Copy image for caption folder
+        shutil.copy2(in_dir / f, out_dir / f)
+        
+        # Pass 1: Whisper (Env/Action)
+        env_cap = clean_caption(quick_infer(in_dir/f, get_whisper_prompt(trigger, real_name)), trigger)
+        with open(out_dir / (os.path.splitext(f)[0] + ".txt"), "w", encoding="utf-8") as tf:
+            tf.write(env_cap)
+        
+        # Pass 2: Photofit (Physical Traits)
+        trait_desc = quick_infer(in_dir/f, get_photofit_prompt(trigger))
+        photofit_logs.append({"image": f, "description": trait_desc})
+
+    # --- STATISTICAL CONSENSUS ---
+    print("🔄 Generating Master Photofit consensus...")
+    csv_path = char_dir / f"{slug}_desc.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["image", "description"])
+        writer.writeheader()
+        writer.writerows(photofit_logs)
+
+    all_desc = "\n".join([d['description'] for d in photofit_logs])
+    summary_prompt = f"Analyze these {len(photofit_logs)} descriptions of {trigger}. Create a clinical 'Master Photofit' consensus paragraph (~200 words). If glasses appear in >50% of reports, include them:\n{all_desc}"
     
-    print(f"   Found {len(files)} images to process...")
+    sum_msg = [{"role": "user", "content": [{"type": "text", "text": summary_prompt}]}]
+    inputs = processor(text=[processor.apply_chat_template(sum_msg, tokenize=False, add_generation_prompt=True)], return_tensors="pt").to(model.device)
+    gen_ids = model.generate(**inputs, max_new_tokens=400)
+    master_photofit = processor.batch_decode(gen_ids[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0].strip()
 
-    for i, f in enumerate(files, 1):
-        # Output paths in 05_caption folder
-        out_img_path = out_dir / f
-        txt_path = out_dir / (os.path.splitext(f)[0] + ".txt")
-        
-        # Skip if already captioned
-        if txt_path.exists() and out_img_path.exists(): 
-            print(f"   [{i}/{len(files)}] {f}... (skipped, already done)")
-            continue
-        
-        print(f"   [{i}/{len(files)}] {f}...", end="", flush=True)
-        
-        try:
-            # Copy image to output folder first
-            import shutil
-            if not out_img_path.exists():
-                shutil.copy2(in_dir / f, out_img_path)
-            
-            # Inference Logic
-            if model == "qwen-vl":
-                from qwen_vl_utils import process_vision_info
-                
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": str(in_dir/f), "max_pixels": 768*768},
-                            {"type": "text", "text": system_instruction},
-                        ],
-                    }
-                ]
-                
-                text_input = qwen_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                image_inputs, video_inputs = process_vision_info(messages)
-                
-                inputs = qwen_processor(
-                    text=[text_input],
-                    images=image_inputs,
-                    videos=video_inputs,
-                    padding=True,
-                    return_tensors="pt",
-                ).to(qwen_model_obj.device)
+    with open(char_dir / f"{slug}_desc.txt", "w") as f: f.write(master_photofit)
+    print(f"✅ Success. Master Photofit saved to: {char_dir}")
 
-                generated_ids = qwen_model_obj.generate(**inputs, max_new_tokens=256)
-                
-                generated_ids_trimmed = [
-                    out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-                ]
-                caption = qwen_processor.batch_decode(
-                    generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-                )[0]
-                
-            else:
-                caption = f"{trigger}, a {gender_str}."
-
-            caption = clean_caption(caption, trigger)
-            with open(txt_path, "w", encoding="utf-8") as tf: tf.write(caption)
-            print(" Done.")
-            
-        except Exception as e:
-            print(f" Error: {e}")
-
-    print("✅ Captioning complete.")
+if __name__ == "__main__":
+    if len(sys.argv) > 1: run(sys.argv[1])

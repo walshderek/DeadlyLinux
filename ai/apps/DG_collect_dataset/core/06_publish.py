@@ -1,162 +1,158 @@
-# 06_publish.py
-# Generates:
-# - files/tomls/{slug}_win.toml  (from config_template.toml)
-# - train_{slug}_{res}.bat       (from train_template.bat)
-#
-# Requires:
-# - C:\AI\apps\musubi-tuner\files\tomls\config_template.toml
-# - C:\AI\apps\musubi-tuner\train_template.bat
-
-from __future__ import annotations
-
 import sys
+import os
+import shutil
 from pathlib import Path
+from PIL import Image
 
+# --- BOOTSTRAP ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path: sys.path.append(current_dir)
+import utils
 
-# --- EDIT THESE DEFAULTS IF YOU WANT ---
-WAN_ROOT_DEFAULT = r"C:\AI\apps\musubi-tuner"
-MODELS = {
-    "DIT_LOW":  r"C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\bf16\Wan-2.2-T2V-Low-Noise-BF16.safetensors",
-    "DIT_HIGH": r"C:\AI\models\diffusion_models\Wan\Wan2.2\14B\Wan_2_2_T2V\bf16\Wan-2.2-T2V-High-Noise-BF16.safetensors",
-    "VAE":      r"C:\AI\models\vae\WAN\Wan2.1_VAE.pth",
-    "T5":       r"C:\AI\models\clip\models_t5_umt5-xxl-enc-bf16.pth",
-}
+# --- CONFIG ---
+RESOLUTIONS = [256, 512, 1024]
+TEMPLATE_DIR = Path(current_dir) / "templates"
 
-TRAIN_DEFAULTS = {
-    "LEARNING_RATE": "0.0001",
-    "NETWORK_ALPHA": "128",
-    "NETWORK_DIM": "128",
-    "N_WORKERS": "4",
-    "EPOCHS": "10",
-    "GRAD_ACCUM": "1",
-}
+def read_template(filename):
+    with open(TEMPLATE_DIR / filename, 'r') as f:
+        return f.read()
 
+def generate_toml(clean_path_unc, resolution):
+    """
+    Generates the high-fidelity Musubi dataset config.
+    Note: clean_path_unc must use //wsl.localhost/Ubuntu/... for Windows usage.
+    """
+    return f'''[general]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = false
+[[datasets]]
+image_directory = "{clean_path_unc}"
+cache_directory = "{clean_path_unc}_cache"
+num_repeats = 1
+resolution = [{resolution},{resolution}]
+'''
 
-def _norm_toml_path(p: str) -> str:
-    # TOML wants forward slashes reliably across platforms.
-    return p.replace("\\", "/")
+def run(slug):
+    print(f"=== PUBLISHING {slug} ===")
+    config = utils.load_config(slug)
+    if not config: return
+    
+    path = utils.get_project_path(slug)
+    caption_dir = path / utils.DIRS.get('caption', '05_caption')
+    clean_dir = path / utils.DIRS.get('clean', '04_clean')
+    
+    # 1. Source Selection
+    if caption_dir.exists() and os.listdir(caption_dir):
+        src_dir = caption_dir
+    else:
+        src_dir = clean_dir
+        print("⚠️  Warning: Using uncaptioned source data.")
 
+    # 2. Directory Preparation
+    publish_root = path / utils.DIRS.get('publish', '06_publish')
+    if publish_root.exists(): shutil.rmtree(publish_root)
+    publish_root.mkdir(parents=True, exist_ok=True)
+    
+    musubi_wsl_app = Path(utils.MUSUBI_PATHS['wsl_app'])
+    musubi_dataset_root = musubi_wsl_app / "files" / "datasets" / slug
+    
+    # 3. Multi-Resolution Image Loop
+    files = [f for f in os.listdir(src_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+    
+    for res in RESOLUTIONS:
+        print(f"   -> Processing {res}px resolution...")
+        res_dir = publish_root / str(res)
+        musubi_res_dir = musubi_dataset_root / str(res)
+        res_dir.mkdir(parents=True, exist_ok=True)
+        musubi_res_dir.mkdir(parents=True, exist_ok=True)
+        
+        for f in files:
+            # Resize and Save
+            with Image.open(src_dir / f) as img:
+                img = img.convert("RGB")
+                img.resize((res, res), Image.LANCZOS).save(res_dir / f, quality=95)
+            
+            # Sync to Musubi app folder
+            shutil.copy2(res_dir / f, musubi_res_dir / f)
+            
+            # Copy matching caption
+            txt = os.path.splitext(f)[0] + ".txt"
+            if (src_dir / txt).exists():
+                shutil.copy2(src_dir / txt, res_dir / txt)
+                shutil.copy2(src_dir / txt, musubi_res_dir / txt)
 
-def _read_text(path: Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing required file: {path}")
-    return path.read_text(encoding="utf-8")
+    # 4. Generate TOMLs (The Path Translation Fix)
+    # Win TOML points to the 256 dataset via UNC path
+    win_unc_path = utils.get_windows_unc_path(publish_root / "256")
+    linux_dataset_path = str(musubi_dataset_root / "256")
+    
+    toml_win = generate_toml(win_unc_path, 256)
+    toml_linux = generate_toml(linux_dataset_path, 256)
+    
+    toml_dir = musubi_wsl_app / "files" / "tomls"
+    toml_dir.mkdir(parents=True, exist_ok=True)
+    
+    with open(toml_dir / f"{slug}_win.toml", "w") as f: f.write(toml_win)
+    with open(toml_dir / f"{slug}_linux.toml", "w") as f: f.write(toml_linux)
+    
+    # Also backup to local project folder
+    with open(publish_root / f"{slug}_win.toml", "w") as f: f.write(toml_win)
 
+    # 5. Training Script Generation (Full Template Token Replacement)
+    try:
+        bat_content = read_template("train_template.bat")
+        sh_content = read_template("train_template.sh")
+        
+        # Token mapping for Windows
+        win_map = {
+            "@WAN@": utils.MUSUBI_PATHS['win_app'],
+            "@CFG@": f"{utils.MUSUBI_PATHS['win_app']}\\files\\tomls\\{slug}_win.toml",
+            "@OUT@": f"{utils.MUSUBI_PATHS['win_app']}\\outputs\\{slug}",
+            "@OUTNAME@": slug,
+            "@LOGDIR@": f"{utils.MUSUBI_PATHS['win_app']}\\logs",
+            "@DIT_LOW@": f"{utils.MUSUBI_PATHS['win_models']}\\diffusion-models\\Wan\\Wan2.2\\14B\\Wan_2_2_I2V\\fp16\\wan2.2_t2v_low_noise_14B_fp16.safetensors",
+            "@DIT_HIGH@": f"{utils.MUSUBI_PATHS['win_models']}\\diffusion-models\\Wan\\Wan2.2\\14B\\Wan_2_2_I2V\\fp16\\wan2.2_t2v_high_noise_14B_fp16.safetensors",
+            "@VAE@": f"{utils.MUSUBI_PATHS['win_models']}\\vae\\wan_2.1_vae.pth",
+            "@T5@": f"{utils.MUSUBI_PATHS['win_models']}\\clip\\models_t5_umt5-xxl-enc-bf16.pth",
+            "@GRAD_ACCUM@": "1", "@LEARNING_RATE@": "0.0001", "@N_WORKERS@": "8", "@EPOCHS@": "35", "@NETWORK_ALPHA@": "16"
+        }
+        
+        # Token mapping for Linux
+        linux_map = {
+            "@WAN@": utils.MUSUBI_PATHS['wsl_app'],
+            "@CFG@": f"{utils.MUSUBI_PATHS['wsl_app']}/files/tomls/{slug}_linux.toml",
+            "@OUT@": f"{utils.MUSUBI_PATHS['wsl_app']}/outputs/{slug}",
+            "@OUTNAME@": slug,
+            "@LOGDIR@": f"{utils.MUSUBI_PATHS['wsl_app']}/logs",
+            "@DIT_LOW@": f"{utils.MUSUBI_PATHS['wsl_models']}/diffusion-models/Wan/Wan2.2/14B/Wan_2_2_I2V/fp16/wan2.2_t2v_low_noise_14B_fp16.safetensors",
+            "@DIT_HIGH@": f"{utils.MUSUBI_PATHS['wsl_models']}/diffusion-models/Wan/Wan2.2/14B/Wan_2_2_I2V/fp16/wan2.2_t2v_high_noise_14B_fp16.safetensors",
+            "@VAE@": f"{utils.MUSUBI_PATHS['wsl_models']}/vae/wan_2.1_vae.pth",
+            "@T5@": f"{utils.MUSUBI_PATHS['wsl_models']}/clip/models_t5_umt5-xxl-enc-bf16.pth",
+            "@GRAD_ACCUM@": "1", "@LEARNING_RATE@": "0.0001", "@N_WORKERS@": "8", "@EPOCHS@": "35", "@NETWORK_ALPHA@": "16"
+        }
 
-def _write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+        for k, v in win_map.items(): bat_content = bat_content.replace(k, v)
+        for k, v in linux_map.items(): sh_content = sh_content.replace(k, v)
 
+        with open(musubi_wsl_app / f"train_{slug}.bat", "w") as f: f.write(bat_content)
+        with open(musubi_wsl_app / f"train_{slug}.sh", "w") as f: f.write(sh_content)
+        os.chmod(musubi_wsl_app / f"train_{slug}.sh", 0o755)
+        
+        # Backup to project folder
+        with open(publish_root / f"train_{slug}.bat", "w") as f: f.write(bat_content)
+        
+    except Exception as e:
+        print(f"⚠️  Script generation error: {e}")
 
-def fill_placeholders(template: str, mapping: dict[str, str]) -> str:
-    out = template
-    for k, v in mapping.items():
-        out = out.replace(f"@{k}@", str(v))
-    return out
+    # 6. Final Logging
+    desc_path = path / "characterDesc" / f"{slug}_desc.txt"
+    desc = desc_path.read_text() if desc_path.exists() else ""
+    utils.log_trigger_to_sheet(config.get('name', slug), config.get('trigger', ''), desc)
 
-
-def publish(slug: str, res: int, wan_root: str = WAN_ROOT_DEFAULT) -> None:
-    wan_root_path = Path(wan_root)
-
-    # Inputs (templates)
-    local_template_path = Path(__file__).parent / "templates" / "config_template.toml"
-    toml_template_path = local_template_path if local_template_path.exists() else wan_root_path / "files" / "tomls" / "config_template.toml"
-    local_bat_template_path = Path(__file__).parent / "templates" / "train_template.bat"
-    bat_template_path = local_bat_template_path if local_bat_template_path.exists() else wan_root_path / "train_template.bat"
-
-    toml_template = _read_text(toml_template_path)
-    bat_template = _read_text(bat_template_path)
-
-    # Output locations
-    dataset_dir = wan_root_path / "files" / "datasets" / slug / str(res)
-    cache_dir = dataset_dir / "cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    out_toml_path = wan_root_path / "files" / "tomls" / f"{slug}_win.toml"
-    out_bat_path = wan_root_path / f"train_{slug}_{res}.bat"
-
-    # Build replacements for TOML template
-    toml_map: dict[str, str] = {}
-    toml_map["DATASET_PATH"] = _norm_toml_path(str(dataset_dir))
-    toml_map["CACHE_PATH"] = _norm_toml_path(str(cache_dir))
-
-    # Training placeholder vars from your template
-    toml_map.update(TRAIN_DEFAULTS)
-
-    # Fill TOML
-    toml_out = fill_placeholders(toml_template, toml_map)
-
-    # Hard sanity checks
-    if "@DATASET_PATH@" in toml_out or "@CACHE_PATH@" in toml_out:
-        raise RuntimeError(
-            "TOML publish failed: @DATASET_PATH@ or @CACHE_PATH@ still present after replacement."
-        )
-
-    # Warn if other placeholders remain
-    if "@" in toml_out:
-        print(
-            "WARNING: TOML still contains '@' tokens. "
-            "Your template likely has additional placeholders not filled by this script.",
-            file=sys.stderr,
-        )
-
-    _write_text(out_toml_path, toml_out)
-
-    # Build replacements for BAT template
-    out_dir = wan_root_path / "outputs" / slug
-    log_dir = wan_root_path / "logs"
-
-    bat_map: dict[str, str] = {
-        "WAN": str(wan_root_path),
-        "CFG": str(out_toml_path),
-        "DIT_LOW": MODELS["DIT_LOW"],
-        "DIT_HIGH": MODELS["DIT_HIGH"],
-        "VAE": MODELS["VAE"],
-        "T5": MODELS["T5"],
-        "OUT": str(out_dir),
-        "OUTNAME": slug,
-        "LOGDIR": str(log_dir),
-        # If your BAT template includes these placeholders too, fill them:
-        **TRAIN_DEFAULTS,
-    }
-
-    bat_out = fill_placeholders(bat_template, bat_map)
-
-    if "@CFG@" in bat_out or "@WAN@" in bat_out:
-        raise RuntimeError("BAT publish failed: @CFG@ or @WAN@ still present after replacement.")
-
-    _write_text(out_bat_path, bat_out)
-
-    print(f"✅ Published: {slug} ({res})")
-    print(f"   TOML: {out_toml_path}")
-    print(f"   BAT : {out_bat_path}")
-    print(f"   DATA: {dataset_dir}")
-    print(f"   CACHE DIR (created/ensured): {cache_dir}")
-
-
-# -----------------------------
-# Backwards-compatible entrypoint
-# Some parts of your workflow call run(slug) directly.
-# -----------------------------
-def run(slug: str, res: int = 256, wan_root: str = WAN_ROOT_DEFAULT) -> None:
-    publish(slug=slug, res=res, wan_root=wan_root)
-
-
-def main() -> None:
-    # Usage:
-    #   python 06_publish.py theresa_may
-    #   python 06_publish.py theresa_may 256
-    #   python 06_publish.py theresa_may 256 "C:\AI\apps\musubi-tuner"
-    if len(sys.argv) < 2:
-        print("Usage: python 06_publish.py <slug> [resolution=256] [wan_root=C:\\AI\\apps\\musubi-tuner]")
-        raise SystemExit(2)
-
-    slug = sys.argv[1]
-    res = int(sys.argv[2]) if len(sys.argv) >= 3 else 256
-    wan_root = sys.argv[3] if len(sys.argv) >= 4 else WAN_ROOT_DEFAULT
-
-    run(slug=slug, res=res, wan_root=wan_root)
-
+    print(f"✅ Dataset and Training Scripts published correctly for {slug}!")
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1:
+        run(sys.argv[1])

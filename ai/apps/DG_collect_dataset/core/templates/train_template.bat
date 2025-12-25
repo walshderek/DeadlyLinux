@@ -16,6 +16,8 @@ set "LOGDIR=@LOGDIR@"
 cd /d "%WAN_ROOT%"
 if exist "venv\Scripts\activate.bat" (
     call "venv\Scripts\activate.bat"
+) else (
+    echo WARNING: venv not found, using system Python
 )
 
 :: --- START TRAINING ---
@@ -56,8 +58,6 @@ python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
     --timestep_boundary 875 ^
     --timestep_sampling logsnr ^
     --vae "%VAE%" ^
-    --cache_latents ^
-    --cache_latents_to_disk ^
     --vae_cache_cpu ^
     --vae_dtype bfloat16 ^
     --sdpa

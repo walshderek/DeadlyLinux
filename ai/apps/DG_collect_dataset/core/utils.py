@@ -38,7 +38,7 @@ DIRS = {
 MODEL_STORE_ROOT = Path("/mnt/c/AI/models")
 
 MUSUBI_PATHS = {
-    'wsl_app': "/home/seanf/ai/apps/musubi-tuner",
+    'wsl_app': "/home/seanf/deadlygraphics/ai/apps/musubi-tuner",
     'wsl_models': "/home/seanf/ai/models",
     'win_app': r"C:\AI\apps\musubi-tuner",
     'win_models': r"C:\AI\models",

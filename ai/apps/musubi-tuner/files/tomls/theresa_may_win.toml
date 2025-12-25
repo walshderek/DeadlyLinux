@@ -1,0 +1,10 @@
+[general]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = false
+[[datasets]]
+image_directory = "C:/AI/apps/musubi-tuner/files/datasets/theresa_may/256"
+cache_directory = "C:/AI/apps/musubi-tuner/files/datasets/theresa_may/256_cache"
+num_repeats = 1
+resolution = [256,256]

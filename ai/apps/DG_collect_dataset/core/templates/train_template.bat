@@ -1,5 +1,12 @@
+train_template.bat (Updated with caching steps & fixes)
+Code snippet
+
 @echo off
 setlocal enabledelayedexpansion
+
+:: ============================================
+:: MUSUBI-TUNER TEMPLATE PIPELINE
+:: ============================================
 
 :: --- PATH CONFIGURATION ---
 set "WAN_ROOT=@WAN@"
@@ -13,15 +20,42 @@ set "OUTNAME=@OUTNAME@"
 set "LOGDIR=@LOGDIR@"
 
 :: --- ENVIRONMENT ---
+set "PYTHON_EXE=%WAN_ROOT%\venv\Scripts\python.exe"
 cd /d "%WAN_ROOT%"
-if exist "venv\Scripts\activate.bat" (
-    call "venv\Scripts\activate.bat"
-) else (
-    echo WARNING: venv not found, using system Python
-)
+call "venv\Scripts\activate.bat"
 
-:: --- START TRAINING ---
-python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
+:: ============================================
+:: STEP 1: CACHE VAE LATENTS
+:: ============================================
+echo STEP 1/3: Caching Image Latents (VAE)
+
+"%PYTHON_EXE%" "wan_cache_latents.py" ^
+    --dataset_config "%CFG%" ^
+    --vae "%VAE%" ^
+    --vae_dtype bfloat16 ^
+    --vae_cache_cpu
+
+if %ERRORLEVEL% neq 0 goto :error
+
+:: ============================================
+:: STEP 2: CACHE TEXT ENCODER OUTPUTS
+:: ============================================
+echo STEP 2/3: Caching Text Encoder Outputs (T5)
+
+"%PYTHON_EXE%" "wan_cache_text_encoder_outputs.py" ^
+    --dataset_config "%CFG%" ^
+    --t5 "%T5%" ^
+    --fp8_t5 ^
+    --batch_size 16
+
+if %ERRORLEVEL% neq 0 goto :error
+
+:: ============================================
+:: STEP 3: START TRAINING
+:: ============================================
+echo STEP 3/3: Starting Training
+
+"%PYTHON_EXE%" -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
     --dataset_config "%CFG%" ^
     --discrete_flow_shift 3 ^
     --dit "%DIT_LOW%" ^
@@ -62,4 +96,13 @@ python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
     --vae_dtype bfloat16 ^
     --sdpa
 
+if %ERRORLEVEL% neq 0 goto :error
+
+echo TRAINING COMPLETE
 pause
+exit /b 0
+
+:error
+echo [!] AN ERROR OCCURRED
+pause
+exit /b 1

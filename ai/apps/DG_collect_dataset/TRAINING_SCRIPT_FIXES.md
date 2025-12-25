@@ -222,9 +222,66 @@ To train michael_gove model:
 4. Monitor cache generation in first epoch (creates `.npz` files in cache directory)
 5. Training should proceed normally after cache files are generated
 
+## Fix 6: Attention Mechanism Flag Requirements
+**Date:** 2025-12-25
+**Files Affected:** Training batch scripts
+
+### Problem
+Training scripts included `--sdpa` argument which was not recognized by caching scripts but IS REQUIRED by the training script:
+
+**Caching Scripts (DON'T support attention flags):**
+- `wan_cache_latents.py` - error: unrecognized arguments: --sdpa
+- `wan_cache_text_encoder_outputs.py` - error: unrecognized arguments: --sdpa
+
+**Training Script (REQUIRES attention flag):**
+- `wan_train_network.py` - ValueError: either --sdpa, --flash-attn, --flash3, --sage-attn or --xformers must be specified
+
+This caused the training pipeline to fail at the first step (VAE latent caching) because --sdpa was being passed to scripts that don't support it.
+
+### Solution
+Remove attention flags from caching steps but ADD them to the training step. Use `--sage-attn` (sage attention) since it was successfully imported.
+
+**Changed in `train_theresa_may_full.bat`:**
+- Removed `--sdpa` from VAE caching command (Step 1)
+- Removed `--sdpa` from text encoder caching command (Step 2)
+- Changed `--sdpa` to `--sage-attn` in training command (Step 3)
+
+### Correct Pattern
+```batch
+:: STEP 1: VAE Caching (NO attention flag)
+"%PYTHON_EXE%" "wan_cache_latents.py" ^
+    --vae "%VAE_PATH%" ^
+    --vae_dtype bfloat16 ^
+    --vae_cache_cpu
+
+:: STEP 2: Text Encoder Caching (NO attention flag)
+"%PYTHON_EXE%" "wan_cache_text_encoder_outputs.py" ^
+    --t5 "%T5_PATH%" ^
+    --fp8_t5 ^
+    --batch_size 16
+
+:: STEP 3: Training (REQUIRES attention flag)
+"%PYTHON_EXE%" -m accelerate.commands.launch "wan_train_network.py" ^
+    --vae "%VAE_PATH%" ^
+    --vae_dtype bfloat16 ^
+    --vae_cache_cpu ^
+    --sage-attn
+```
+
+### Available Attention Mechanisms
+The training script supports these options (choose one):
+- `--sdpa` - Scaled Dot Product Attention (PyTorch native)
+- `--flash-attn` - Flash Attention
+- `--flash3` - Flash Attention 3
+- `--sage-attn` - Sage Attention (recommended if available)
+- `--xformers` - xFormers library
+
+Use `--sage-attn` if the logs show "Successfully imported sageattention", otherwise use `--sdpa` as fallback.
+
 ## Notes
 
 - Cache generation happens on first epoch and can take significant time
 - Once cache files exist, subsequent training runs are much faster
 - Cache files are resolution-specific (256, 512, 1024)
 - If you modify images or captions, delete cache files to regenerate
+- The `--sdpa` flag should not be used in current musubi-tuner scripts

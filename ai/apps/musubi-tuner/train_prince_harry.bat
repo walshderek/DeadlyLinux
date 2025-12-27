@@ -1,6 +1,3 @@
-train_template.bat (Updated with caching steps & fixes)
-Code snippet
-
 @echo off
 setlocal enabledelayedexpansion
 

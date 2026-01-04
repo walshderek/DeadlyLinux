@@ -11,6 +11,7 @@ import os
 import csv
 import json
 import base64
+import re
 from pathlib import Path
 from typing import List, Dict
 from collections import Counter
@@ -50,14 +51,38 @@ def verify_ollama():
 # ============================================================================
 
 def get_vision_prompt(trigger_word: str) -> str:
-    """Ultra-fast prompt for llava:7b."""
-    return f"""Quick analysis of {trigger_word}:
+    """Comprehensive prompt for detailed captions - 10x more verbose."""
+    return f"""Provide a comprehensive, highly detailed analysis of {trigger_word} in this image.
 
-Physical: Describe face, hair, eyes, build in 1 sentence.
+PHYSICAL DESCRIPTION (8-12 sentences):
+Describe in rich detail:
+- Facial features: face shape, eyes (color, shape, expression), eyebrows, nose, mouth, chin, cheekbones, jawline
+- Hair: color, length, texture, style, any grays or highlights
+- Skin: tone, complexion, any visible marks or features
+- Body: build, posture, proportions, height impression
+- Age indicators: estimated age range with specific details
+- Any glasses, jewelry, tattoos, or distinctive permanent features
+- Overall appearance and demeanor
+- Facial expression and mood conveyed
 
-Scene: Describe setting, lighting, mood in 1 sentence.
+SCENE & CONTEXT (8-12 sentences):
+Describe in rich detail:
+- Exact clothing worn: every visible garment, colors, patterns, textures, style, fit
+- Accessories: ties, scarves, watches, bags, hats, anything visible
+- Body position and pose: exact stance, arm positions, hand gestures, head orientation
+- Setting: indoor/outdoor, specific location type, background elements in detail
+- Environmental details: architecture, furniture, objects, nature, urban features
+- Lighting: source, quality (harsh/soft), direction, shadows, time of day indicators
+- Camera angle and framing: perspective, shot type, composition
+- Overall mood and atmosphere of the scene
+- Any text, signs, or distinctive environmental markers
+- Colors and tones throughout the image
 
-Keep it short and fast."""
+Be extremely detailed and descriptive. Write in flowing narrative prose. Start both sections with "{trigger_word}".
+
+Format your response as:
+Physical: [detailed physical description]
+Scene: [detailed scene description]"""
 
 
 def compress_image(img_path: Path, max_width: int = 768) -> bytes:
@@ -144,14 +169,14 @@ def analyze_image(img_path: Path, trigger_word: str) -> Dict:
 
 def phase_1_vision_analysis(image_files: List[Path], trigger_word: str, output_dir: Path) -> tuple:
     """
-    Phase 1: Parallel vision analysis.
-    Load model once, process images in parallel threads.
+    Phase 1: SEQUENTIAL vision analysis to ensure correct file-caption matching.
+    Process images one at a time in sorted order.
     """
     print("\n" + "="*70)
     print("PHASE 1: VISION ANALYSIS")
     print("="*70)
-    print(f"🔍 Parallel analysis of {len(image_files)} images")
-    print(f"   llava:7b on 256x256 = ~2-3 sec per image (4 workers)\n")
+    print(f"🔍 Sequential analysis of {len(image_files)} images")
+    print(f"   llava:7b on 256x256 = ~2-3 sec per image\n")
     
     prompts_data = []
     captions_data = []
@@ -162,20 +187,14 @@ def phase_1_vision_analysis(image_files: List[Path], trigger_word: str, output_d
     phase_dir = output_dir / "phase_1_vision"
     phase_dir.mkdir(parents=True, exist_ok=True)
     
-    # Parallel processing with ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {
-            executor.submit(analyze_image, img_file, trigger_word): img_file 
-            for img_file in image_files
-        }
-        
-        for future in tqdm(as_completed(futures), total=len(image_files), desc="📊 Vision Analysis", unit="img"):
-            result = future.result()
-            if result:
-                prompts_data.append({'file_name': result['file_name'], 'prompt': result['prompt']})
-                captions_data.append({'file_name': result['file_name'], 'caption': result['caption']})
-                prompts_list.append(result['prompt'])
-                captions_list.append(result['caption'])
+    # SEQUENTIAL processing to maintain file order and avoid mix-ups
+    for img_file in tqdm(sorted(image_files), desc="📊 Vision Analysis", unit="img"):
+        result = analyze_image(img_file, trigger_word)
+        if result:
+            prompts_data.append({'file_name': result['file_name'], 'prompt': result['prompt']})
+            captions_data.append({'file_name': result['file_name'], 'caption': result['caption']})
+            prompts_list.append(result['prompt'])
+            captions_list.append(result['caption'])
     
     # Save prompts.csv
     prompts_csv = phase_dir / "prompts.csv"
@@ -297,7 +316,6 @@ def strip_constants(text: str, keywords: List[str]) -> str:
     """Remove constant keywords from text, being careful not to corrupt it."""
     for keyword in keywords:
         # Only remove as whole words, surrounded by spaces or punctuation
-        import re
         # Match keyword as whole word with word boundaries
         pattern = r'\b' + re.escape(keyword) + r'\b'
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
@@ -371,18 +389,28 @@ def run(slug: str):
     config = utils.load_config(slug)
     trigger_word = config.get('trigger') or utils.obfuscate_trigger(config.get('name', slug))
     
-    # Read 256x256 resized images for faster captioning
-    input_dir = path / "05_resize_256x256"
+    # CRITICAL: ONLY read from 256px folder to prevent token limit errors
+    input_dir = path / "05_resize" / "256"
+    
+    # HARD CONSTRAINT: Fail immediately if 256 folder doesn't exist
+    if not input_dir.exists():
+        print(f"❌ CRITICAL ERROR: 256px resize folder not found!")
+        print(f"   Expected: {input_dir}")
+        print(f"   You must run Step 5 (resize) first to create this folder.")
+        return
+    
     output_dir = path / utils.DIRS.get('caption', '06_caption')
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Get images
+    # Get images from 256px folder ONLY
     image_files = sorted(input_dir.glob("*.jpg"))
     if not image_files:
         print(f"❌ No images found in {input_dir}")
+        print(f"   The 256px resize folder exists but contains no .jpg files.")
         return
     
     print(f"\n📊 Dataset: {len(image_files)} images")
+    print(f"📁 Input: {input_dir} (256px ONLY)")
     print(f"🎯 Trigger: {trigger_word}")
     print(f"🤖 Vision: {OLLAMA_VISION_MODEL} (sequential)")
     print(f"📝 Text: {OLLAMA_TEXT_MODEL}")

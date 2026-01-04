@@ -80,7 +80,7 @@ def run(slug):
         print(f"🔄 Processing {res}x{res}...")
         
         # Source: Pre-resized folder
-        src_res_dir = path / f"05_resize_{res}x{res}"
+        src_res_dir = path / "05_resize" / str(res)
         if not src_res_dir.exists():
             print(f"   ⚠️  Skipping {res} - folder not found")
             continue

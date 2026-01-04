@@ -11,7 +11,7 @@ from PIL import Image
 from tqdm import tqdm
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))
 import utils
 
 RESOLUTIONS = [1024, 512, 256]
@@ -40,7 +40,7 @@ def run(slug: str):
     print(f"🎯 Resolutions: {RESOLUTIONS}\n")
     
     for resolution in RESOLUTIONS:
-        out_dir = path / f"05_resize_{resolution}x{resolution}"
+        out_dir = path / "05_resize" / str(resolution)
         out_dir.mkdir(parents=True, exist_ok=True)
         
         print(f"\n🔄 Resizing to {resolution}x{resolution}...")
@@ -63,3 +63,11 @@ def run(slug: str):
     
     print(f"\n✅ Resize Complete!")
     print(f"   📁 Images resized to: {', '.join([f'{r}x{r}' for r in RESOLUTIONS])}")
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python 05_resize.py <slug>")
+        sys.exit(1)
+    run(sys.argv[1])

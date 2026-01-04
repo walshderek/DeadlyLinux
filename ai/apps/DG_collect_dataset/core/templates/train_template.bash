@@ -1,4 +1,3 @@
-@echo off
 setlocal enabledelayedexpansion
 
 :: --- PATH CONFIGURATION ---
@@ -66,3 +65,102 @@ python -m accelerate.commands.launch --num_processes 1 "wan_train_network.py" ^
   --sdpa
 
 pause
+
+#!/bin/bash
+set -e
+
+# =============================================
+# MUSUBI-TUNER TEMPLATE PIPELINE (.sh version)
+# =============================================
+
+# --- PATH CONFIGURATION ---
+WAN="@WAN@"
+CFG="@CFG@"
+DIT_LOW="@DIT_LOW@"
+DIT_HIGH="@DIT_HIGH@"
+VAE="@VAE@"
+T5="@T5@"
+OUT="@OUT@"
+OUTNAME="@OUTNAME@"
+LOGDIR="@LOGDIR@"
+GRAD_ACCUM="@GRAD_ACCUM@"
+LEARNING_RATE="@LEARNING_RATE@"
+N_WORKERS="@N_WORKERS@"
+EPOCHS="@EPOCHS@"
+NETWORK_ALPHA="@NETWORK_ALPHA@"
+NETWORK_DIM="@NETWORK_DIM@"
+
+# --- ENVIRONMENT ---
+cd "$WAN"
+if [ -d "venv" ]; then
+  source venv/bin/activate
+  PYTHON_EXE="python"
+else
+  PYTHON_EXE="python3"
+fi
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+echo "============================================="
+echo "STEP 1/3: Caching Image Latents (VAE)"
+echo "============================================="
+$PYTHON_EXE wan_cache_latents.py \
+  --dataset_config "$CFG" \
+  --vae "$VAE" \
+  --vae_dtype bfloat16 \
+  --vae_cache_cpu
+
+echo "============================================="
+echo "STEP 2/3: Caching Text Encoder Outputs (T5)"
+echo "============================================="
+$PYTHON_EXE wan_cache_text_encoder_outputs.py \
+  --dataset_config "$CFG" \
+  --t5 "$T5" \
+  --fp8_t5 \
+  --batch_size 16
+
+echo "============================================="
+echo "STEP 3/3: Starting Training"
+echo "============================================="
+$PYTHON_EXE -m accelerate.commands.launch --num_processes 1 wan_train_network.py \
+  --dataset_config "$CFG" \
+  --discrete_flow_shift 3 \
+  --dit "$DIT_LOW" \
+  --dit_high_noise "$DIT_HIGH" \
+  --fp8_base \
+  --fp8_scaled \
+  --fp8_t5 \
+  --gradient_accumulation_steps "$GRAD_ACCUM" \
+  --gradient_checkpointing \
+  --img_in_txt_in_offloading \
+  --learning_rate "$LEARNING_RATE" \
+  --max_grad_norm 1.0 \
+  --log_with tensorboard \
+  --logging_dir "$LOGDIR" \
+  --lr_scheduler cosine \
+  --lr_warmup_steps 200 \
+  --max_data_loader_n_workers "$N_WORKERS" \
+  --max_timestep 1000 \
+  --max_train_epochs "$EPOCHS" \
+  --min_timestep 0 \
+  --mixed_precision bf16 \
+  --network_alpha "$NETWORK_ALPHA" \
+  --network_dim "$NETWORK_DIM" \
+  --network_module networks.lora_wan \
+  --blocks_to_swap 24 \
+  --optimizer_type AdamW8bit \
+  --output_dir "$OUT" \
+  --output_name "$OUTNAME" \
+  --persistent_data_loader_workers \
+  --save_every_n_epochs 5 \
+  --seed 42 \
+  --t5 "$T5" \
+  --task t2v-A14B \
+  --timestep_boundary 875 \
+  --timestep_sampling logsnr \
+  --vae "$VAE" \
+  --vae_cache_cpu \
+  --vae_dtype bfloat16 \
+  --sdpa
+
+echo "TRAINING COMPLETE"

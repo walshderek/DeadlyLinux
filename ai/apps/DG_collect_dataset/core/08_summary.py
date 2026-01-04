@@ -18,7 +18,7 @@ def run(slug):
     path = utils.get_project_path(slug)
     
     # Input: The final 256px dataset sent to training
-    in_dir = path / "06_publish" / "256"
+    in_dir = path / "07_publish" / "256"
     
     # Output: The summary folder
     out_dir = path / utils.DIRS['summary']

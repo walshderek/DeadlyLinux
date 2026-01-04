@@ -1,150 +1,391 @@
-import sys
-import os
-import re
-import torch
-import shutil
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
-from qwen_vl_utils import process_vision_info
-from tqdm import tqdm
+"""
+STEP 5: IDENTITY-AWARE SUBTRACTIVE CAPTIONING
+Load vision model ONCE, process images sequentially.
 
-# --- BOOTSTRAP ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-import utils
-
-# --- CONFIGURATION ---
-BATCH_SIZE = 4
-QWEN_PATH = "/mnt/c/AI/models/LLM/Qwen2.5-VL-3B-Instruct"
-
-def get_caption_prompt(trigger):
-    """
-    Instructs the model to describe the image, referring to the person
-    by the specific abstract trigger word provided.
-    """
-    return f"""
-Describe this image of {trigger}.
-Focus on their clothing, the background, and any actions.
-Be concise.
+Phase 1: Vision Analysis - Sequential processing, one call per image
+Phase 2: Consensus Engine - Extract constants from prompts
+Phase 3: Subtractive Save - Clean captions by removing constants
 """
 
-def clean_and_force_trigger(text, trigger):
-    """
-    Ensures the caption starts with the abstract trigger word.
-    """
-    # Strip common prefixes
-    text = re.sub(r"(?i)^(sure,? here is|the image shows|a photo of|an image of|this is a picture of)\s*", "", text.strip())
-    text = text.replace("**", "").replace("*", "").strip(" ,.:")
+import os
+import csv
+import json
+import base64
+from pathlib import Path
+from typing import List, Dict
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from PIL import Image
+import io
+import ollama
+from tqdm import tqdm
+
+# Import utils
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import utils
+
+# Configuration
+OLLAMA_VISION_MODEL = "qwen3-vl"
+OLLAMA_TEXT_MODEL = "qwen3"
+OLLAMA_HOST = "127.0.0.1:11434"
+CONSTANT_THRESHOLD = 0.8
+
+
+def verify_ollama():
+    """Check Ollama connectivity."""
+    try:
+        models = ollama.list()
+        model_names = [m.get('name', m.get('model', 'unknown')) for m in models.get('models', [])]
+        print(f"✅ Connected to Ollama")
+        print(f"📦 Models: {', '.join(model_names)}")
+        return True
+    except Exception as e:
+        print(f"❌ Cannot connect to Ollama: {e}")
+        return False
+
+
+# ============================================================================
+# PHASE 1: VISION ANALYSIS (Sequential, one model load)
+# ============================================================================
+
+def get_vision_prompt(trigger_word: str) -> str:
+    """Fast, concise prompt for quick analysis."""
+    return f"""Quick visual analysis of {trigger_word}:
+
+IDENTITY (permanent traits):
+Describe face, hair, eyes, build in 2 sentences. Start with: {trigger_word}
+
+|||
+
+SCENE (context):
+Describe setting, lighting, clothing, mood in 2 sentences. Start with: {trigger_word}
+
+Analyze:"""
+
+
+def compress_image(img_path: Path, max_width: int = 768) -> bytes:
+    """Compress image to reduce processing time."""
+    img = Image.open(img_path)
+    ratio = max_width / img.width
+    new_height = int(img.height * ratio)
+    img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
     
-    # FORCE the trigger at the start if missing
-    if not text.lower().startswith(trigger.lower()):
-        text = f"{trigger}, {text}"
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=85)
+    return buf.getvalue()
+
+
+def analyze_image(img_path: Path, trigger_word: str) -> Dict:
+    """
+    Process single image with vision model.
+    Returns prompt and caption.
+    """
+    try:
+        # Compress image for faster processing
+        img_data = base64.b64encode(compress_image(img_path)).decode('utf-8')
         
+        response = ollama.chat(
+            model=OLLAMA_VISION_MODEL,
+            messages=[{
+                'role': 'user',
+                'content': get_vision_prompt(trigger_word),
+                'images': [img_data]
+            }]
+        )
+        
+        content = response['message']['content'].strip()
+        parts = content.split('|||')
+        
+        if len(parts) < 2:
+            prompt = content
+            caption = f"{trigger_word} scene."
+        else:
+            prompt = parts[0].strip()
+            caption = parts[1].strip()
+        
+        # Ensure trigger word
+        if not prompt.lower().startswith(trigger_word.lower()):
+            prompt = f"{trigger_word} {prompt}"
+        if not caption.lower().startswith(trigger_word.lower()):
+            caption = f"{trigger_word} {caption}"
+        
+        return {
+            'file_name': img_path.name,
+            'prompt': prompt,
+            'caption': caption
+        }
+        
+    except Exception as e:
+        print(f"\n⚠️  Error on {img_path.name}: {e}")
+        return None
+
+
+def phase_1_vision_analysis(image_files: List[Path], trigger_word: str, output_dir: Path) -> tuple:
+    """
+    Phase 1: Parallel vision analysis.
+    Load model once, process images in parallel threads.
+    """
+    print("\n" + "="*70)
+    print("PHASE 1: VISION ANALYSIS")
+    print("="*70)
+    print(f"🔍 Parallel analysis of {len(image_files)} images")
+    print(f"   Model loaded once, ~3-5 sec per image (compressed)\n")
+    
+    prompts_data = []
+    captions_data = []
+    prompts_list = []
+    captions_list = []
+    
+    # Create phase subfolder
+    phase_dir = output_dir / "phase_1_vision"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Parallel processing with ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(analyze_image, img_file, trigger_word): img_file 
+            for img_file in image_files
+        }
+        
+        for future in tqdm(as_completed(futures), total=len(image_files), desc="📊 Vision Analysis", unit="img"):
+            result = future.result()
+            if result:
+                prompts_data.append({'file_name': result['file_name'], 'prompt': result['prompt']})
+                captions_data.append({'file_name': result['file_name'], 'caption': result['caption']})
+                prompts_list.append(result['prompt'])
+                captions_list.append(result['caption'])
+    
+    # Save prompts.csv
+    prompts_csv = phase_dir / "prompts.csv"
+    with open(prompts_csv, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=['file_name', 'prompt'])
+        writer.writeheader()
+        writer.writerows(prompts_data)
+    
+    # Save raw captions
+    captions_csv = phase_dir / "captions_raw.csv"
+    with open(captions_csv, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=['file_name', 'caption'])
+        writer.writeheader()
+        writer.writerows(captions_data)
+    
+    print(f"\n✅ Phase 1 Complete!")
+    print(f"   📁 {phase_dir}")
+    print(f"   📊 {len(prompts_list)} images analyzed")
+    
+    return prompts_list, captions_list
+
+
+# ============================================================================
+# PHASE 2: CONSENSUS ENGINE (Text-only)
+# ============================================================================
+
+def calculate_master_description(prompts: List[str], trigger_word: str) -> str:
+    """Merge prompts into master description."""
+    sample = prompts[:50]
+    
+    prompt = f"""Analyze these {len(sample)} physical descriptions of "{trigger_word}":
+
+{chr(10).join(f"{i+1}. {desc}" for i, desc in enumerate(sample))}
+
+Create ONE master description that captures the consensus traits.
+Focus on features mentioned consistently.
+Keep it 3-4 sentences, factual and specific.
+Start with "{trigger_word}".
+
+Master Description:"""
+    
+    response = ollama.chat(
+        model=OLLAMA_TEXT_MODEL,
+        messages=[{'role': 'user', 'content': prompt}]
+    )
+    
+    return response['message']['content'].strip()
+
+
+def extract_strip_keywords(prompts: List[str], trigger_word: str) -> List[str]:
+    """Find constant traits appearing in >80% of prompts."""
+    # Frequency analysis
+    all_words = []
+    for desc in prompts:
+        words = desc.lower().replace(trigger_word.lower(), "").split()
+        words = [w.strip('.,;:!?"()[]') for w in words if len(w) > 3]
+        all_words.extend(words)
+    
+    word_counts = Counter(all_words)
+    total = len(prompts)
+    
+    # Find high-frequency words
+    constants = []
+    for word, count in word_counts.most_common(50):
+        if count / total >= CONSTANT_THRESHOLD:
+            constants.append(word)
+    
+    # Ask Ollama to validate and expand
+    prompt = f"""Identify CONSTANT physical traits from these {len(prompts)} descriptions of "{trigger_word}":
+
+{chr(10).join(prompts[:15])}
+
+These are traits that appear in almost every description.
+Return ONLY a comma-separated list of keywords.
+Examples: glasses, grey hair, beard, blue eyes, fair skin
+
+Keywords:"""
+    
+    response = ollama.chat(
+        model=OLLAMA_TEXT_MODEL,
+        messages=[{'role': 'user', 'content': prompt}]
+    )
+    
+    ollama_constants = [w.strip() for w in response['message']['content'].strip().split(',')]
+    
+    all_constants = set(constants + ollama_constants)
+    return sorted(list(all_constants))
+
+
+def phase_2_consensus_engine(prompts_list: List[str], trigger_word: str, project_path: Path) -> List[str]:
+    """Phase 2: Extract constants from prompts."""
+    print("\n" + "="*70)
+    print("PHASE 2: CONSENSUS ENGINE")
+    print("="*70)
+    print(f"🧠 Analyzing {len(prompts_list)} prompts...\n")
+    
+    # Master description
+    master = calculate_master_description(prompts_list, trigger_word)
+    master_path = project_path / "average_prompt.txt"
+    master_path.write_text(master, encoding='utf-8')
+    
+    print(f"✅ Master Description:")
+    print(f"   {master}\n")
+    
+    # Extract constants
+    print(f"🔍 Identifying constant traits...\n")
+    strip_keywords = extract_strip_keywords(prompts_list, trigger_word)
+    
+    strip_path = project_path / "strip_keywords.json"
+    with open(strip_path, 'w') as f:
+        json.dump(strip_keywords, f, indent=2)
+    
+    print(f"✅ Strip Keywords ({len(strip_keywords)}):")
+    print(f"   {', '.join(strip_keywords)}\n")
+    
+    return strip_keywords
+
+
+# ============================================================================
+# PHASE 3: SUBTRACTIVE SAVE (Text-only, instant)
+# ============================================================================
+
+def strip_constants(text: str, keywords: List[str]) -> str:
+    """Remove constant keywords from text."""
+    for keyword in keywords:
+        text = text.replace(keyword, "")
+        text = text.replace(keyword.capitalize(), "")
+        text = text.replace(keyword.upper(), "")
+    
+    # Clean extra spaces
+    text = " ".join(text.split())
     return text
 
-def run(slug):
-    config = utils.load_config(slug)
-    if not config:
-        print(f"❌ Error: Config not found for {slug}")
+
+def phase_3_subtractive_save(image_files: List[Path], captions_list: List[str],
+                             strip_keywords: List[str], input_dir: Path, output_dir: Path):
+    """Phase 3: Clean captions and save outputs."""
+    print("\n" + "="*70)
+    print("PHASE 3: SUBTRACTIVE SAVE")
+    print("="*70)
+    print(f"💾 Cleaning and saving {len(captions_list)} captions...\n")
+    
+    # Create phase folder
+    phase_dir = output_dir / "phase_3_final"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    
+    successful = 0
+    final_data = []
+    
+    for img_file, caption in zip(image_files, captions_list):
+        try:
+            # Strip constants
+            cleaned = strip_constants(caption, strip_keywords)
+            
+            # Save caption
+            txt_path = phase_dir / f"{img_file.stem}.txt"
+            txt_path.write_text(cleaned, encoding='utf-8')
+            
+            # Copy image
+            import shutil
+            shutil.copy2(img_file, phase_dir / img_file.name)
+            
+            final_data.append({'file_name': img_file.name, 'caption': cleaned})
+            successful += 1
+            
+        except Exception as e:
+            print(f"⚠️  Error on {img_file.name}: {e}")
+    
+    # Save final CSV
+    final_csv = phase_dir / "captions_final.csv"
+    with open(final_csv, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=['file_name', 'caption'])
+        writer.writeheader()
+        writer.writerows(final_data)
+    
+    print(f"\n✅ Phase 3 Complete!")
+    print(f"   📁 {phase_dir}")
+    print(f"   🎯 {successful}/{len(image_files)} saved")
+
+
+# ============================================================================
+# ORCHESTRATION
+# ============================================================================
+
+def run(slug: str):
+    """Main: Phase 1 (vision) → Phase 2 (consensus) → Phase 3 (save)"""
+    print("\n" + "="*70)
+    print("IDENTITY-AWARE SUBTRACTIVE CAPTIONING")
+    print("="*70)
+    
+    if not verify_ollama():
         return
-
-    # Use the trigger exactly as defined in config (the abstract one)
-    trigger = config.get('trigger')
-    # Safety: If config is somehow missing it, regen it
-    if not trigger or trigger == "Scottington":
-        trigger = utils.obfuscate_trigger(config.get('name', slug))
-
+    
+    # Setup
     path = utils.get_project_path(slug)
-    in_dir = path / utils.DIRS.get('clean', '04_clean')
-    out_dir = path / utils.DIRS.get('caption', '05_caption')
-    out_dir.mkdir(parents=True, exist_ok=True)
+    config = utils.load_config(slug)
+    trigger_word = config.get('trigger') or utils.obfuscate_trigger(config.get('name', slug))
     
-    if not os.path.exists(QWEN_PATH):
-        print(f"❌ Error: Model not found at {QWEN_PATH}")
-        return
-
-    print(f"📝 [05_caption] Batch Engine (Batch: {BATCH_SIZE})")
-    print(f"   -> Using Abstract Trigger: '{trigger}'")
-
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_quant_type="nf4"
-    )
-
-    try:
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            QWEN_PATH, quantization_config=bnb_config, device_map="auto"
-        )
-        processor = AutoProcessor.from_pretrained(QWEN_PATH)
-    except Exception as e:
-        print(f"❌ Error loading model: {e}")
-        return
-
-    files = sorted([f for f in os.listdir(in_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg'))])
+    input_dir = path / utils.DIRS.get('clean', '04_clean')
+    output_dir = path / utils.DIRS.get('caption', '05_caption')
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Batches
-    batches = [files[i:i + BATCH_SIZE] for i in range(0, len(files), BATCH_SIZE)]
-    print(f"   -> Processing {len(files)} images in {len(batches)} batches...")
+    # Get images
+    image_files = sorted(input_dir.glob("*.jpg"))
+    if not image_files:
+        print(f"❌ No images found in {input_dir}")
+        return
+    
+    print(f"\n📊 Dataset: {len(image_files)} images")
+    print(f"🎯 Trigger: {trigger_word}")
+    print(f"🤖 Vision: {OLLAMA_VISION_MODEL} (sequential)")
+    print(f"📝 Text: {OLLAMA_TEXT_MODEL}")
+    
+    # Run phases
+    prompts_list, captions_list = phase_1_vision_analysis(image_files, trigger_word, output_dir)
+    strip_keywords = phase_2_consensus_engine(prompts_list, trigger_word, path)
+    phase_3_subtractive_save(image_files, captions_list, strip_keywords, input_dir, output_dir)
+    
+    # Summary
+    print("\n" + "="*70)
+    print("✅ PIPELINE COMPLETE")
+    print("="*70)
+    print(f"📁 Phase 1: {output_dir / 'phase_1_vision'}")
+    print(f"📁 Phase 2: {path / 'average_prompt.txt'}")
+    print(f"📁 Phase 3: {output_dir / 'phase_3_final'}")
+    print(f"📊 Total: {len(image_files)} images")
 
-    io_executor = ThreadPoolExecutor(max_workers=4)
-
-    for batch_files in tqdm(batches, desc="Batch Inference"):
-        batch_messages = []
-        
-        # Prepare Batch
-        for f in batch_files:
-            img_path = in_dir / f
-            messages = [{
-                "role": "user", 
-                "content": [
-                    {"type": "image", "image": str(img_path), "max_pixels": 768*768}, 
-                    {"type": "text", "text": get_caption_prompt(trigger)}
-                ]
-            }]
-            batch_messages.append(messages)
-
-        # Tokenize & Generate
-        texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in batch_messages]
-        image_inputs_list = []
-        for msg in batch_messages:
-            imgs, _ = process_vision_info(msg)
-            image_inputs_list.extend(imgs)
-
-        inputs = processor(
-            text=texts,
-            images=image_inputs_list,
-            padding=True,
-            return_tensors="pt"
-        ).to(model.device)
-
-        generated_ids = model.generate(**inputs, max_new_tokens=96)
-        
-        generated_ids_trimmed = [
-            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        output_texts = processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True)
-
-        # Save
-        for i, raw_text in enumerate(output_texts):
-            filename = batch_files[i]
-            final_caption = clean_and_force_trigger(raw_text, trigger)
-            
-            src_img = in_dir / filename
-            dst_img = out_dir / filename
-            dst_txt = out_dir / (os.path.splitext(filename)[0] + ".txt")
-            
-            io_executor.submit(shutil.copy2, src_img, dst_img)
-            
-            def write_txt(p, c):
-                with open(p, "w", encoding="utf-8") as f: f.write(c)
-            io_executor.submit(write_txt, dst_txt, final_caption)
-
-    io_executor.shutdown(wait=True)
-    print(f"✅ Success. Captions saved to: {out_dir}")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        run(sys.argv[1])
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python 05_caption.py <slug>")
+        sys.exit(1)
+    run(sys.argv[1])

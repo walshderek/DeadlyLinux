@@ -28,9 +28,10 @@ DIRS = {
     "crop": "02_crop",
     "validate": "03_validate",
     "clean": "04_clean",
-    "caption": "05_caption",
-    "publish": "06_publish",
-    "summary": "07_summary"
+    "resize": "05_resize",
+    "caption": "06_caption",
+    "publish": "07_publish",
+    "summary": "08_summary"
 }
 
 # --- MUSUBI PATH CONFIGURATION ---
@@ -63,9 +64,10 @@ def count_images_for_step(slug, step_num):
         2: DIRS['crop'],
         3: DIRS['validate'],
         4: DIRS['clean'],
-        5: DIRS['caption'],
-        6: '06_publish/256',
-        7: '07_summary',
+        5: DIRS['resize'],
+        6: DIRS['caption'],
+        7: DIRS['publish'],
+        8: DIRS['summary'],
     }
     out_dir = path / step_to_dir.get(step_num, '')
     if not out_dir.exists():

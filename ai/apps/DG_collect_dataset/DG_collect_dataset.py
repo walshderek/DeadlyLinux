@@ -3,17 +3,6 @@ import sys
 import os
 import importlib
 
-# --- VENV ACTIVATION ---
-def activate_venv():
-    venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "bin", "activate_this.py")
-    if os.environ.get("VIRTUAL_ENV") is None:
-        activate_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "bin", "activate")
-        if os.path.exists(activate_script):
-            print(f"[INFO] Activating venv: {activate_script}")
-            os.execv(activate_script, [activate_script] + sys.argv)
-
-activate_venv()
-
 # --- BOOTSTRAP ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 core_dir = os.path.join(current_dir, "core")
@@ -27,9 +16,10 @@ STEPS = {
     2: "02_crop",
     3: "03_validate",
     4: "04_clean",
-    5: "05_caption",
-    6: "06_publish",
-    7: "07_summary"
+    5: "05_resize",
+    6: "06_caption",
+    7: "07_publish",
+    8: "08_summary"
 }
 
 def run_pipeline(slug, display_name, trigger, only_step=None):
@@ -49,7 +39,7 @@ def run_pipeline(slug, display_name, trigger, only_step=None):
         try:
             step_nums = [int(only_step)]
         except ValueError:
-            print(f"❌ Error: --only-step must be a number (1-7).")
+            print(f"❌ Error: --only-step must be a number (1-8).")
             return
     else:
         step_nums = sorted(STEPS.keys())

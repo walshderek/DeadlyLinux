@@ -173,16 +173,20 @@ def run(slug):
         for pass_num in range(MAX_PASSES):
             # Try to process
             new_img = process_image(working_img, pass_num)
-            
+
             # Ensure dims match (safety for OpenCV saving)
             if new_img.shape != img.shape:
                 new_img = cv2.resize(new_img, (img.shape[1], img.shape[0]))
-            
-            # Save the result of this pass
+
+            # Save the result of this pass into its folder
             cv2.imwrite(str(pass_dirs[pass_num] / f_name), new_img)
-            
+
             # Update working image for next pass
             working_img = new_img
+
+        # After all passes, also save the final cleaned image into the root clean_dir
+        final_out = clean_dir / f_name
+        cv2.imwrite(str(final_out), working_img)
     
     print(f"✅ Clean Complete: All images processed through {MAX_PASSES} passes")
 

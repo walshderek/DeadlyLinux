@@ -55,3 +55,6 @@ ai/apps/DG_collect_dataset/.venv/
 *.venv/
 __pycache__/
 *.pyc
+ai/apps/musubi-tuner/models/
+# ignore models folders\nai/apps/*/models/
+ai/apps/DG_collect_dataset/yolov8n.pt

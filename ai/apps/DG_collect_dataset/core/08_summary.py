@@ -116,12 +116,11 @@ def run(slug):
         with open(identity_file, 'r', encoding='utf-8') as f:
             description = f.read().strip()
     
-    # Log to Google Sheets
-    project_name = config.get('name', slug)
+    # Log to Google Sheets (use slug as project name, not display name)
     trigger = config.get('trigger', 'Unknown')
     
     print(f"\n📊 Logging to Google Sheets...")
-    utils.log_trigger_to_sheet(project_name, trigger, description)
+    utils.log_trigger_to_sheet(slug, trigger, description)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

@@ -48,6 +48,7 @@ MUSUBI_PATHS = {
 
 # Google Sheets logging defaults
 GOOGLE_SHEET_ID = "1RMWaEiBtSfDZXd1jZ00Fg145faXWqB33ssDiq34ZzXo"
+GOOGLE_SHEET_RANGE = "Sheet1!H:K"  # Columns: H=name, I=trigger, J=timestamp, K=description
 GOOGLE_CLIENT_SECRET = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\client_secret.json"
 GOOGLE_TOKEN_PATH = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\token.pickle"
 GOOGLE_KEY_PATH = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\encryption_key.key"
@@ -246,7 +247,7 @@ def log_trigger_to_sheet(name: str, trigger: str, description: str = ""):
         body = {"values": [[name, trigger, datetime.utcnow().isoformat() + "Z", description]]}
         service.spreadsheets().values().append(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range="Sheet1!A:D",
+            range=GOOGLE_SHEET_RANGE,
             valueInputOption="USER_ENTERED",
             body=body,
         ).execute()

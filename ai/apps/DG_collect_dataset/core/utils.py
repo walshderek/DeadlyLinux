@@ -49,6 +49,14 @@ MUSUBI_PATHS = {
 # Google Sheets logging defaults
 GOOGLE_SHEET_ID = "1RMWaEiBtSfDZXd1jZ00Fg145faXWqB33ssDiq34ZzXo"
 GOOGLE_SHEET_RANGE = "Sheet1!H:K"  # Columns: H=name, I=trigger, J=timestamp, K=description
+# Column mapping allows placing fields into arbitrary sheet columns.
+# Example: {'name': 'H', 'trigger': 'I', 'timestamp': 'J', 'description': 'K'}
+GOOGLE_SHEET_COLUMN_MAP = {
+    'name': 'H',
+    'trigger': 'I',
+    'timestamp': 'J',
+    'description': 'K'
+}
 GOOGLE_CLIENT_SECRET = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\client_secret.json"
 GOOGLE_TOKEN_PATH = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\token.pickle"
 GOOGLE_KEY_PATH = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\encryption_key.key"
@@ -187,9 +195,18 @@ def obfuscate_trigger(name: str) -> str:
     import hashlib
     suffix = hashlib.md5(base.encode()).hexdigest()[:4]
     return (obf + suffix).upper()
+def _col_letter_to_index(letter: str) -> int:
+    """Convert Excel-style column letter (A..Z, AA..) to 1-based index."""
+    letter = letter.upper()
+    idx = 0
+    for ch in letter:
+        if 'A' <= ch <= 'Z':
+            idx = idx * 26 + (ord(ch) - ord('A') + 1)
+    return idx
+
 
 def log_trigger_to_sheet(name: str, trigger: str, description: str = ""):
-    """Append trigger/name to Google Sheet. Supports encrypted tokens and service accounts."""
+    """Append trigger/name to Google Sheet using a configurable column map."""
     try:
         from googleapiclient.discovery import build
         from google.auth.transport.requests import Request
@@ -244,10 +261,39 @@ def log_trigger_to_sheet(name: str, trigger: str, description: str = ""):
         if getattr(creds, "expired", False) and getattr(creds, "refresh_token", None):
             creds.refresh(Request())
         service = build("sheets", "v4", credentials=creds)
-        body = {"values": [[name, trigger, datetime.utcnow().isoformat() + "Z", description]]}
+
+        mapping = GOOGLE_SHEET_COLUMN_MAP
+        indices = {k: _col_letter_to_index(v) for k, v in mapping.items()}
+        min_idx = min(indices.values())
+        max_idx = max(indices.values())
+        width = max_idx - min_idx + 1
+
+        # Initialize blank row of the appropriate width
+        row = ["" for _ in range(width)]
+
+        def set_at(field_name, value):
+            idx = indices.get(field_name)
+            if idx is None:
+                return
+            pos = idx - min_idx
+            if 0 <= pos < width:
+                row[pos] = value
+
+        set_at('name', name)
+        set_at('trigger', trigger)
+        set_at('timestamp', datetime.utcnow().isoformat() + "Z")
+        set_at('description', description)
+
+        body = {"values": [row]}
+
+        # Build range string from min->max mapped letters
+        min_letter = mapping.get('name')
+        max_letter = mapping.get('description')
+        range_str = f"Sheet1!{min_letter}:{max_letter}"
+
         service.spreadsheets().values().append(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=GOOGLE_SHEET_RANGE,
+            range=range_str,
             valueInputOption="USER_ENTERED",
             body=body,
         ).execute()

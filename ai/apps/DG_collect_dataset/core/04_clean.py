@@ -18,7 +18,9 @@ def _ensure_venv():
         venv_python = os.path.join(venv_path, "bin", "python")
         if os.path.exists(venv_python):
             os.execv(venv_python, [venv_python] + sys.argv)
-_ensure_venv()
+    # NOTE: Do NOT re-exec the venv at import time (this causes the main
+    # pipeline to be restarted when this module is imported). The venv
+    # re-exec is only necessary when this file is run directly as a script.
 
 import utils
 
@@ -144,7 +146,8 @@ def run(slug):
     if clean_dir.exists(): shutil.rmtree(clean_dir)
     clean_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create folders for each pass
+    # Create folders for each pass (but don't save intermediate results)
+    # Just keep for tracking if needed later
     pass_dirs = []
     for i in range(1, MAX_PASSES + 1):
         pass_dir = clean_dir / f"pass_{i:02d}"
@@ -178,19 +181,19 @@ def run(slug):
             if new_img.shape != img.shape:
                 new_img = cv2.resize(new_img, (img.shape[1], img.shape[0]))
 
-            # Save the result of this pass into its folder
-            cv2.imwrite(str(pass_dirs[pass_num] / f_name), new_img)
-
-            # Update working image for next pass
+            # Update working image for next pass (no per-pass output printing)
             working_img = new_img
 
-        # After all passes, also save the final cleaned image into the root clean_dir
+        # After all passes, save the final cleaned image into the root clean_dir
         final_out = clean_dir / f_name
         cv2.imwrite(str(final_out), working_img)
     
     print(f"✅ Clean Complete: All images processed through {MAX_PASSES} passes")
 
 if __name__ == "__main__":
+    # Only enforce venv re-exec when this file is executed directly.
+    _ensure_venv()
+
     if len(sys.argv) > 1:
         run(sys.argv[1])
     else:

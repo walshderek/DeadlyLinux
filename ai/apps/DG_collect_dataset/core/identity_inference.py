@@ -103,13 +103,19 @@ IMPORTANT EXCLUSIONS: Do NOT describe:
 - Temporary makeup or styling
 - Current emotional expression (though resting face characteristics are fine)
 
-Provide a comprehensive, richly detailed description (15-25 sentences minimum). Use specific, vivid language with precise adjectives. Start with "{trigger_word}". Write in flowing prose, not bullet points."""
+Provide a comprehensive, richly detailed description (3-5 sentences). Use specific, vivid language with precise adjectives. Start with "{trigger_word}". Write in flowing prose, not bullet points."""
 
 
-def compress_image(img_path: Path, max_width: int = 768) -> bytes:
+def compress_image(img_path: Path, max_width: int = 256) -> bytes:
     """Compress image for faster Ollama processing."""
     try:
         img = Image.open(img_path)
+        # Don't upscale if image is already smaller
+        if img.width <= max_width:
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=85)
+            return buf.getvalue()
+        
         ratio = max_width / img.width
         new_height = int(img.height * ratio)
         img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
@@ -289,7 +295,13 @@ def run(slug: str):
     config = utils.load_config(slug)
     trigger_word = config.get('trigger') or utils.obfuscate_trigger(config.get('name', slug))
     
-    input_dir = path / utils.DIRS.get('clean', '04_clean')
+    # CRITICAL: Use 256px resized images for faster inference
+    input_dir = path / "05_resize" / "256"
+    if not input_dir.exists():
+        print(f"❌ CRITICAL: 256px folder not found at {input_dir}")
+        print(f"   Run Step 5 (resize) first to generate 256px images.")
+        return
+    
     output_dir = path / "06_caption" / "identity"
     
     # Get all images
@@ -297,6 +309,8 @@ def run(slug: str):
     if not image_files:
         print(f"❌ No images found in {input_dir}")
         return
+    
+    print(f"✅ Using 256x256 images from: {input_dir}")
     
     print(f"\n📊 Full dataset: {len(image_files)} images")
     print(f"🎯 Trigger: {trigger_word}")

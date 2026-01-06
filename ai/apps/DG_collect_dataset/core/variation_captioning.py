@@ -252,8 +252,16 @@ def run(slug: str):
     config = utils.load_config(slug)
     trigger_word = config.get('trigger') or utils.obfuscate_trigger(config.get('name', slug))
     
-    input_dir = path / utils.DIRS.get('clean', '04_clean')
+    # CRITICAL: Use 256px resized images for faster inference
+    input_dir = path / "05_resize" / "256"
+    if not input_dir.exists():
+        print(f"❌ CRITICAL: 256px folder not found at {input_dir}")
+        print(f"   Run Step 5 (resize) first to generate 256px images.")
+        return
+    
     output_dir = path / "06_caption" / "captions"
+    
+    print(f"✅ Using 256x256 images from: {input_dir}")
     
     # Get all images
     image_files = sorted(input_dir.glob("*.jpg"))

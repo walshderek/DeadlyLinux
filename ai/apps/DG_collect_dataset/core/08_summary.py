@@ -11,8 +11,9 @@ import utils
 
 def run(slug):
     """
-    Step 07: Dataset Visual Reporting
+    Step 08: Dataset Visual Reporting + Google Sheets Logging
     Generates a high-density 64x64 contact sheet and text summary.
+    Logs project name, trigger, and description to Google Sheets.
     """
     config = utils.load_config(slug)
     path = utils.get_project_path(slug)
@@ -24,7 +25,7 @@ def run(slug):
     out_dir = path / utils.DIRS['summary']
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"📊 [07_summary] Generating v4.3-Compact Report for {slug}...")
+    print(f"📊 [08_summary] Generating v4.3-Compact Report for {slug}...")
     
     if not in_dir.exists():
         print(f"❌ Error: Publish folder not found: {in_dir}")
@@ -106,6 +107,21 @@ def run(slug):
             f.write(f"IMAGE: {filename}\nCAPTION: {caption}\n\n")
 
     print(f"✅ Summary Saved:\n   Visual: {save_path}\n   Text:   {txt_path}")
+    
+    # --- GOOGLE SHEETS LOGGING ---
+    # Get character description from identity file
+    identity_file = path / "06_caption" / "identity" / "identity.txt"
+    description = ""
+    if identity_file.exists():
+        with open(identity_file, 'r', encoding='utf-8') as f:
+            description = f.read().strip()
+    
+    # Log to Google Sheets
+    project_name = config.get('name', slug)
+    trigger = config.get('trigger', 'Unknown')
+    
+    print(f"\n📊 Logging to Google Sheets...")
+    utils.log_trigger_to_sheet(project_name, trigger, description)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

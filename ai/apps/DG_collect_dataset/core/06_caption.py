@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import utils
 
 # Configuration
-OLLAMA_VISION_MODEL = "llava:7b"
+OLLAMA_VISION_MODEL = "qwen3-vl:latest"
 OLLAMA_TEXT_MODEL = "qwen3"
 OLLAMA_HOST = "127.0.0.1:11434"
 CONSTANT_THRESHOLD = 0.8
@@ -171,15 +171,14 @@ def phase_1_vision_analysis(image_files: List[Path], trigger_word: str, output_d
     """
     Phase 1: SEQUENTIAL vision analysis to ensure correct file-caption matching.
     Process images one at a time in sorted order.
+    WRITES TO CSV INCREMENTALLY to avoid holding large amounts in RAM.
     """
     print("\n" + "="*70)
     print("PHASE 1: VISION ANALYSIS")
     print("="*70)
     print(f"🔍 Sequential analysis of {len(image_files)} images")
-    print(f"   llava:7b on 256x256 = ~2-3 sec per image\n")
+    print(f"   qwen3-vl on 256x256 = ~5-10 sec per image\n")
     
-    prompts_data = []
-    captions_data = []
     prompts_list = []
     captions_list = []
     
@@ -187,32 +186,48 @@ def phase_1_vision_analysis(image_files: List[Path], trigger_word: str, output_d
     phase_dir = output_dir / "phase_1_vision"
     phase_dir.mkdir(parents=True, exist_ok=True)
     
-    # SEQUENTIAL processing to maintain file order and avoid mix-ups
-    for img_file in tqdm(sorted(image_files), desc="📊 Vision Analysis", unit="img"):
-        result = analyze_image(img_file, trigger_word)
-        if result:
-            prompts_data.append({'file_name': result['file_name'], 'prompt': result['prompt']})
-            captions_data.append({'file_name': result['file_name'], 'caption': result['caption']})
-            prompts_list.append(result['prompt'])
-            captions_list.append(result['caption'])
-    
-    # Save prompts.csv
+    # Open CSV files immediately
     prompts_csv = phase_dir / "prompts.csv"
-    with open(prompts_csv, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=['file_name', 'prompt'], quoting=csv.QUOTE_ALL)
-        writer.writeheader()
-        writer.writerows(prompts_data)
-    
-    # Save raw captions
     captions_csv = phase_dir / "captions_raw.csv"
-    with open(captions_csv, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=['file_name', 'caption'], quoting=csv.QUOTE_ALL)
-        writer.writeheader()
-        writer.writerows(captions_data)
+    
+    prompts_f = open(prompts_csv, 'w', newline='', encoding='utf-8')
+    captions_f = open(captions_csv, 'w', newline='', encoding='utf-8')
+    prompts_writer = csv.DictWriter(prompts_f, fieldnames=['file_name', 'prompt'], quoting=csv.QUOTE_ALL)
+    captions_writer = csv.DictWriter(captions_f, fieldnames=['file_name', 'caption'], quoting=csv.QUOTE_ALL)
+    prompts_writer.writeheader()
+    captions_writer.writeheader()
+    prompts_f.flush()
+    captions_f.flush()
+    
+    try:
+        # SEQUENTIAL processing to maintain file order and avoid mix-ups
+        for img_file in tqdm(sorted(image_files), desc="📊 Vision Analysis", unit="img"):
+            result = analyze_image(img_file, trigger_word)
+            if result:
+                # Write each row immediately to disk
+                prompts_writer.writerow({'file_name': result['file_name'], 'prompt': result['prompt']})
+                captions_writer.writerow({'file_name': result['file_name'], 'caption': result['caption']})
+                
+                # Keep in memory for phase 2
+                prompts_list.append(result['prompt'])
+                captions_list.append(result['caption'])
+                
+                # Flush to disk after every row
+                prompts_f.flush()
+                captions_f.flush()
+    except Exception as e:
+        print(f"\n❌ Phase 1 Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        prompts_f.close()
+        captions_f.close()
     
     print(f"\n✅ Phase 1 Complete!")
     print(f"   📁 {phase_dir}")
     print(f"   📊 {len(prompts_list)} images analyzed")
+    print(f"   💾 CSVs written to disk (streaming mode)")
     
     return prompts_list, captions_list
 
@@ -327,7 +342,7 @@ def strip_constants(text: str, keywords: List[str]) -> str:
 
 def phase_3_subtractive_save(image_files: List[Path], captions_list: List[str],
                              strip_keywords: List[str], input_dir: Path, output_dir: Path):
-    """Phase 3: Clean captions and save outputs."""
+    """Phase 3: Clean captions and save outputs. WRITES CSV INCREMENTALLY."""
     print("\n" + "="*70)
     print("PHASE 3: SUBTRACTIVE SAVE")
     print("="*70)
@@ -338,37 +353,43 @@ def phase_3_subtractive_save(image_files: List[Path], captions_list: List[str],
     phase_dir.mkdir(parents=True, exist_ok=True)
     
     successful = 0
-    final_data = []
     
-    for img_file, caption in zip(image_files, captions_list):
-        try:
-            # Strip constants
-            cleaned = strip_constants(caption, strip_keywords)
-            
-            # Save caption
-            txt_path = phase_dir / f"{img_file.stem}.txt"
-            txt_path.write_text(cleaned, encoding='utf-8')
-            
-            # Copy image
-            import shutil
-            shutil.copy2(img_file, phase_dir / img_file.name)
-            
-            final_data.append({'file_name': img_file.name, 'caption': cleaned})
-            successful += 1
-            
-        except Exception as e:
-            print(f"⚠️  Error on {img_file.name}: {e}")
-    
-    # Save final CSV
+    # Open final CSV in write mode
     final_csv = phase_dir / "captions_final.csv"
-    with open(final_csv, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=['file_name', 'caption'])
-        writer.writeheader()
-        writer.writerows(final_data)
+    final_f = open(final_csv, 'w', newline='', encoding='utf-8')
+    final_writer = csv.DictWriter(final_f, fieldnames=['file_name', 'caption'])
+    final_writer.writeheader()
+    final_f.flush()
+    
+    try:
+        for img_file, caption in zip(image_files, captions_list):
+            try:
+                # Strip constants
+                cleaned = strip_constants(caption, strip_keywords)
+                
+                # Save caption
+                txt_path = phase_dir / f"{img_file.stem}.txt"
+                txt_path.write_text(cleaned, encoding='utf-8')
+                
+                # Copy image
+                import shutil
+                shutil.copy2(img_file, phase_dir / img_file.name)
+                
+                # Write to CSV immediately
+                final_writer.writerow({'file_name': img_file.name, 'caption': cleaned})
+                final_f.flush()
+                
+                successful += 1
+                
+            except Exception as e:
+                print(f"⚠️  Error on {img_file.name}: {e}")
+    finally:
+        final_f.close()
     
     print(f"\n✅ Phase 3 Complete!")
     print(f"   📁 {phase_dir}")
     print(f"   🎯 {successful}/{len(image_files)} saved")
+    print(f"   💾 CSV written to disk (streaming mode)")
 
 
 # ============================================================================

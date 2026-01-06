@@ -17,21 +17,7 @@ import utils
 
 # --- CONFIGURATION ---
 RESOLUTIONS = [256, 512, 1024]
-
-
-def generate_toml(image_dir_path, cache_dir_path, resolution):
-    """Generates training configuration for Musubi-Tuner."""
-    return f'''[general]
-caption_extension = ".txt"
-batch_size = 1
-enable_bucket = true
-bucket_no_upscale = false
-[[datasets]]
-image_directory = "{image_dir_path}"
-cache_directory = "{cache_dir_path}"
-num_repeats = 1
-resolution = [{resolution},{resolution}]
-'''
+TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 
 def run(slug):
@@ -71,6 +57,11 @@ def run(slug):
     # Windows C: drive mount point
     win_mount_app = Path("/mnt/c/AI/apps/musubi-tuner")
     win_dataset_root = win_mount_app / "files" / "datasets" / slug if win_mount_app.exists() else None
+    win_toml_dir = win_mount_app / "files" / "tomls" if win_mount_app.exists() else None
+    
+    # Create toml directory
+    if win_toml_dir:
+        win_toml_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n📁 Caption source: {caption_dir}")
     print(f"📊 Publishing to: {publish_root}\n")
@@ -111,7 +102,10 @@ def run(slug):
             
             # Caption Sync (Critical: Every image MUST have a .txt)
             txt = img_file.stem + ".txt"
-            caption_file = caption_dir / "phase_3_final" / txt
+            # Try tier-separated structure first, then legacy
+            caption_file = caption_dir / "final_captions" / "final_captions_raw" / txt
+            if not caption_file.exists():
+                caption_file = caption_dir / "phase_3_final" / txt
             
             if caption_file.exists():
                 shutil.copy2(caption_file, local_res_dir / txt)
@@ -127,17 +121,76 @@ def run(slug):
                     with open(win_dataset_root / str(res) / txt, 'w', encoding='utf-8') as tf:
                         tf.write(fallback_cap)
         
-        # Generate config.toml
-        win_img_path = f"C:/AI/apps/musubi-tuner/files/datasets/{slug}/{res}" if win_dataset_root else str(musubi_res_dir)
-        toml_content = generate_toml(win_img_path, str(musubi_cache_dir), res)
+        # Generate config.toml from template - place in central toml directory
+        config_template = TEMPLATE_DIR / "config_template.toml"
+        if config_template.exists():
+            template_content = config_template.read_text(encoding='utf-8')
+            dataset_path = f"C:/AI/apps/musubi-tuner/files/datasets/{slug}/{res}"
+            cache_path = f"C:/AI/apps/musubi-tuner/files/datasets/{slug}/{res}_cache"
+            
+            toml_content = template_content.replace("@DATASET_PATH@", dataset_path)
+            toml_content = toml_content.replace("@CACHE_PATH@", cache_path)
+        else:
+            # Fallback to inline generation
+            dataset_path = f"C:/AI/apps/musubi-tuner/files/datasets/{slug}/{res}"
+            cache_path = f"C:/AI/apps/musubi-tuner/files/datasets/{slug}/{res}_cache"
+            toml_content = f'''[general]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = false
+[[datasets]]
+image_directory = "{dataset_path}"
+cache_directory = "{cache_path}"
+num_repeats = 1
+resolution = [{res},{res}]
+'''
         
-        for toml_path in [local_res_dir / "config.toml", musubi_res_dir / "config.toml"]:
-            with open(toml_path, 'w', encoding='utf-8') as f:
+        # Write to central toml directory - only write once for 256 resolution
+        if res == 256 and win_toml_dir:
+            with open(win_toml_dir / f"{slug}_win.toml", 'w', encoding='utf-8') as f:
                 f.write(toml_content)
         
-        if win_dataset_root:
-            with open(win_dataset_root / str(res) / "config.toml", 'w', encoding='utf-8') as f:
-                f.write(toml_content)
+        # Generate per-resolution training script from template
+        bat_template = TEMPLATE_DIR / "train_template.bat"
+        if bat_template.exists():
+            template_content = bat_template.read_text(encoding='utf-8')
+            
+            wan_root = "C:\\AI\\apps\\musubi-tuner"
+            cfg_path = f"C:\\AI\\apps\\musubi-tuner\\files\\tomls\\{slug}_win.toml"
+            dit_low = "C:/AI/models/diffusion_models/Wan/Wan2.2/14B/Wan_2_2_T2V/bf16/Wan-2.2-T2V-Low-Noise-BF16.safetensors"
+            dit_high = "C:/AI/models/diffusion_models/Wan/Wan2.2/14B/Wan_2_2_T2V/bf16/Wan-2.2-T2V-High-Noise-BF16.safetensors"
+            vae = "C:/AI/models/vae/WAN/Wan2.1_VAE.pth"
+            t5 = "C:/AI/models/clip/models_t5_umt5-xxl-enc-bf16.pth"
+            out_dir = f"C:\\AI\\apps\\musubi-tuner\\outputs\\{slug}"
+            out_name = slug
+            log_dir = "C:\\AI\\apps\\musubi-tuner\\logs"
+            
+            bat_content = template_content.replace("@WAN@", wan_root)
+            bat_content = bat_content.replace("@CFG@", cfg_path)
+            bat_content = bat_content.replace("@DIT_LOW@", dit_low)
+            bat_content = bat_content.replace("@DIT_HIGH@", dit_high)
+            bat_content = bat_content.replace("@VAE@", vae)
+            bat_content = bat_content.replace("@T5@", t5)
+            bat_content = bat_content.replace("@OUT@", out_dir)
+            bat_content = bat_content.replace("@OUTNAME@", out_name)
+            bat_content = bat_content.replace("@LOGDIR@", log_dir)
+            bat_content = bat_content.replace("@LEARNING_RATE@", "5e-5")
+            bat_content = bat_content.replace("@NETWORK_ALPHA@", "32")
+            bat_content = bat_content.replace("@NETWORK_DIM@", "64")
+            bat_content = bat_content.replace("@N_WORKERS@", "2")
+            bat_content = bat_content.replace("@EPOCHS@", "10")
+            bat_content = bat_content.replace("@GRAD_ACCUM@", "1")
+            
+            # Write per-resolution bat to dataset directories
+            if win_dataset_root:
+                with open(win_dataset_root / str(res) / f"train_{slug}_{res}.bat", 'w', encoding='utf-8') as f:
+                    f.write(bat_content)
+                    
+                # For 256 resolution, also write the main training script at root
+                if res == 256:
+                    with open(win_mount_app / f"train_{slug}.bat", 'w', encoding='utf-8') as f:
+                        f.write(bat_content)
         
         print(f"   ✅ {res}x{res}: {len(image_files)} images published")
 

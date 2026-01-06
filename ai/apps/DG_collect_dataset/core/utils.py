@@ -48,14 +48,14 @@ MUSUBI_PATHS = {
 
 # Google Sheets logging defaults
 GOOGLE_SHEET_ID = "1RMWaEiBtSfDZXd1jZ00Fg145faXWqB33ssDiq34ZzXo"
-GOOGLE_SHEET_RANGE = "Sheet1!H:K"  # Columns: H=name, I=trigger, J=timestamp, K=description
+GOOGLE_SHEET_RANGE = "Sheet1!A:K"  # Default range covering A..K
 # Column mapping allows placing fields into arbitrary sheet columns.
-# Example: {'name': 'H', 'trigger': 'I', 'timestamp': 'J', 'description': 'K'}
+# For rory_stewart we want name->A, trigger->B, timestamp->C, description->H
 GOOGLE_SHEET_COLUMN_MAP = {
-    'name': 'H',
-    'trigger': 'I',
-    'timestamp': 'J',
-    'description': 'K'
+    'name': 'A',
+    'trigger': 'B',
+    'timestamp': 'C',
+    'description': 'H'
 }
 GOOGLE_CLIENT_SECRET = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\client_secret.json"
 GOOGLE_TOKEN_PATH = r"C:\AI\apps\ComfyUI Desktop\custom_nodes\comfyui-google-sheets-integration\token.pickle"
